@@ -241,6 +241,14 @@ mod tests {
     }
 
     proptest! {
+        // The exact-output proptests reject ~50% of inputs (when amount_out >= reserve_out
+        // for independently-generated values). Bump the global cap so PROPTEST_CASES can be
+        // cranked without tripping the default 1024 limit.
+        #![proptest_config(ProptestConfig {
+            max_global_rejects: 100_000,
+            ..ProptestConfig::default()
+        })]
+
         // amount_after_fee(x, bps) ≤ x
         #[test]
         fn fee_never_adds_value(
@@ -332,13 +340,17 @@ mod tests {
         // new_reserve_in = reserve_in + amount_in;  new_reserve_out = reserve_out - amount_out
         #[test]
         fn exact_output_reserve_identity(
-            reserve_in  in 1u64..(1u64 << 30),
-            reserve_out in 1000u64..(1u64 << 30),
-            amount_out  in 1u64..1000,
-            fee_bps     in 0u16..1000,
+            reserve_in  in 1u64..(1u64 << 50),
+            reserve_out in 1u64..(1u64 << 50),
+            amount_out  in 1u64..(1u64 << 50),
+            fee_bps     in 0u16..10_000,
         ) {
-            let quote = swap_exact_output(reserve_in, reserve_out, amount_out, fee_bps)
-                .expect("valid quote");
+            // Skip cases where the swap cannot succeed (amount_out >= reserve_out, or the
+            // fee gross-up would overflow u64 with extreme fee_bps).
+            let result = swap_exact_output(reserve_in, reserve_out, amount_out, fee_bps);
+            prop_assume!(result.is_ok());
+            let quote = result.unwrap();
+
             prop_assert_eq!(quote.new_reserve_in,  reserve_in  + quote.amount_in);
             prop_assert_eq!(quote.new_reserve_out, reserve_out - amount_out);
         }
@@ -346,13 +358,14 @@ mod tests {
         // new_k ≥ old_k
         #[test]
         fn exact_output_k_did_not_shrink(
-            reserve_in  in 1u64..(1u64 << 30),
-            reserve_out in 1000u64..(1u64 << 30),
-            amount_out  in 1u64..1000,
-            fee_bps     in 0u16..1000,
+            reserve_in  in 1u64..(1u64 << 50),
+            reserve_out in 1u64..(1u64 << 50),
+            amount_out  in 1u64..(1u64 << 50),
+            fee_bps     in 0u16..10_000,
         ) {
-            let quote = swap_exact_output(reserve_in, reserve_out, amount_out, fee_bps)
-                .expect("valid quote");
+            let result = swap_exact_output(reserve_in, reserve_out, amount_out, fee_bps);
+            prop_assume!(result.is_ok());
+            let quote = result.unwrap();
 
             let old_k = (reserve_in as u128) * (reserve_out as u128);
             let new_k = (quote.new_reserve_in as u128) * (quote.new_reserve_out as u128);
@@ -363,13 +376,14 @@ mod tests {
         // (reserve_in + amount_in_after_fee) · new_reserve_out  ≥  reserve_in · reserve_out
         #[test]
         fn exact_output_pre_fee_invariant(
-            reserve_in  in 1u64..(1u64 << 30),
-            reserve_out in 1000u64..(1u64 << 30),
-            amount_out  in 1u64..1000,
-            fee_bps     in 0u16..1000,
+            reserve_in  in 1u64..(1u64 << 50),
+            reserve_out in 1u64..(1u64 << 50),
+            amount_out  in 1u64..(1u64 << 50),
+            fee_bps     in 0u16..10_000,
         ) {
-            let quote = swap_exact_output(reserve_in, reserve_out, amount_out, fee_bps)
-                .expect("valid quote");
+            let result = swap_exact_output(reserve_in, reserve_out, amount_out, fee_bps);
+            prop_assume!(result.is_ok());
+            let quote = result.unwrap();
 
             let lhs = (reserve_in as u128 + quote.amount_in_after_fee as u128)
                 * (quote.new_reserve_out as u128);
