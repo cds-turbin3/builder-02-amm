@@ -1,9 +1,16 @@
+//! Low-level integer-math helpers.
+
 use crate::AmmMathError;
 
+/// Narrow a `u128` to `u64`, returning `Err(Overflow)` if it doesn't fit.
 pub fn narrow_u64(n: u128) -> Result<u64, AmmMathError> {
     n.try_into().map_err(|_| AmmMathError::Overflow)
 }
 
+/// Ceiling division: `ceil(numerator / denominator)`.
+///
+/// Returns `Err(ZeroDiv)` on zero denominator, `Err(Overflow)`
+/// if `numerator + (denominator - 1)` would overflow `u128`.
 pub fn div_ceil(numerator: u128, denominator: u128) -> Result<u128, AmmMathError> {
     if denominator == 0 {
         return Err(AmmMathError::ZeroDiv);
@@ -15,10 +22,10 @@ pub fn div_ceil(numerator: u128, denominator: u128) -> Result<u128, AmmMathError
         / denominator)
 }
 
+/// `floor((a * b) / denominator)` with overflow-checked intermediate.
+///
+/// The `u128` intermediate prevents overflow during multiplication of two near-`u64` operands.
 pub fn checked_mul_div_floor(a: u128, b: u128, denominator: u128) -> Result<u128, AmmMathError> {
-    // floor[ (a * b) / denom]
-    // a * b overflows u128
-
     if denominator == 0 {
         return Err(AmmMathError::ZeroDiv);
     }
@@ -26,11 +33,19 @@ pub fn checked_mul_div_floor(a: u128, b: u128, denominator: u128) -> Result<u128
     Ok(a.checked_mul(b).ok_or(AmmMathError::Overflow)? / denominator)
 }
 
+/// `ceil((a * b) / denominator)` with overflow-checked intermediate.
+///
+/// Composes [`checked_mul_div_floor`]'s overflow guard with [`div_ceil`]'s rounding.
 pub fn checked_mul_div_ceil(a: u128, b: u128, denominator: u128) -> Result<u128, AmmMathError> {
     let product = a.checked_mul(b).ok_or(AmmMathError::Overflow)?;
     div_ceil(product, denominator)
 }
 
+/// `floor(sqrt(value))` over `u128` using Newton's method.
+///
+/// The initial estimate `2^ceil(bits / 2)` is the smallest power of 2 at least
+/// as large as `sqrt(value)`, which bounds `x + value/x` away from overflow at
+/// the `value = u128::MAX` boundary.
 pub fn integer_sqrt_floor(value: u128) -> u128 {
     if value == 0 {
         return 0;

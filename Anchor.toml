@@ -1,0 +1,24 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+# Placeholder pubkey carried from a prior project. Regenerate before deploying:
+#   solana-keygen new -o target/deploy/amm-keypair.json
+#   anchor keys sync
+# (anchor keys sync rewrites both this file and declare_id! in lib.rs)
+amm = "CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+# Tests live under each program crate's tests/ dir and use anchor-litesvm
+# (not the default mocha harness), so `cargo test` is the right runner.
+test = "cargo test"
+
+[hooks]

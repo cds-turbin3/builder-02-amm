@@ -1,22 +1,31 @@
+//! Swap math for the constant-product invariant `x * y = k`.
+
 use crate::{
     AmmMathError, ExactOutputQuote, SwapQuote, checked_mul_div_ceil, checked_mul_div_floor,
     narrow_u64,
 };
 
+/// Fee denominator (basis-point granularity).
 pub const FEE_DENOMINATOR: u64 = 10_000;
 
+/// `floor(amount_in * (FEE_DENOMINATOR - fee_bps) / FEE_DENOMINATOR)`.
+///
+/// Returns `Err(InvalidFee)` if `fee_bps >= FEE_DENOMINATOR`.
 pub fn amount_after_fee(amount_in: u64, fee_bps: u16) -> Result<u64, AmmMathError> {
     if (fee_bps as u64) >= FEE_DENOMINATOR {
         return Err(AmmMathError::InvalidFee);
     }
 
-    //floor(amount_in * (FEE_DENOMINATOR - fee_bps) / FEE_DENOMINATOR). Use checked_mul_div_floor to do this safely with u128 intermediates and u64 boundaries.
-    let multiplier = (FEE_DENOMINATOR as u128) - (fee_bps as u128); // 10_000 - 30 = 9970
+    let multiplier = (FEE_DENOMINATOR as u128) - (fee_bps as u128);
     let widened = checked_mul_div_floor(amount_in as u128, multiplier, FEE_DENOMINATOR as u128)?;
-    let narrow = narrow_u64(widened).unwrap();
-    Ok(narrow)
+    narrow_u64(widened)
 }
 
+/// Exact-input swap: caller fixes `amount_in`, function computes `amount_out`.
+///
+/// Returns a [`SwapQuote`] satisfying the invariant:
+/// `new_reserve_in == reserve_in + amount_in` (full input enters the pool;
+/// the fee accrues to LPs via `k` growth).
 pub fn swap_exact_input(
     reserve_in: u64,
     reserve_out: u64,
@@ -59,6 +68,13 @@ pub fn swap_exact_input(
     })
 }
 
+/// Exact-output swap: caller fixes `amount_out`, function computes the minimum `amount_in`.
+///
+/// Uses ceiling division on both the invariant step and the fee gross-up so
+/// the trader cannot underpay due to integer truncation.
+///
+/// Returns `Err(InsufficientLiquidity)` when `amount_out >= reserve_out`
+/// (the pool cannot deliver without draining).
 pub fn swap_exact_output(
     reserve_in: u64,
     reserve_out: u64,
@@ -165,7 +181,7 @@ mod tests {
         ));
     }
 
-    // ⌈90·1000/(1000-90)⌉ = 99;  ⌈99·10000/9970⌉ = 100;  fee = 1
+    // ceil(90*1000/(1000-90)) = 99;  ceil(99*10000/9970) = 100;  fee = 1
     #[test]
     fn swap_exact_output_thirty_bps() {
         let q = swap_exact_output(1000, 1000, 90, 30).unwrap();
@@ -176,7 +192,7 @@ mod tests {
         assert_eq!(q.new_reserve_out, 910);
     }
 
-    // amount_out = 0  →  Err(ZeroAmount)
+    // amount_out = 0  ->  Err(ZeroAmount)
     #[test]
     fn swap_exact_output_zero_amount_errors() {
         assert!(matches!(
@@ -185,7 +201,7 @@ mod tests {
         ));
     }
 
-    // reserve_in = 0  →  Err(ZeroReserve)
+    // reserve_in = 0  ->  Err(ZeroReserve)
     #[test]
     fn swap_exact_output_zero_reserve_in_errors() {
         assert!(matches!(
@@ -194,7 +210,7 @@ mod tests {
         ));
     }
 
-    // reserve_out = 0  →  Err(ZeroReserve)
+    // reserve_out = 0  ->  Err(ZeroReserve)
     #[test]
     fn swap_exact_output_zero_reserve_out_errors() {
         assert!(matches!(
@@ -203,7 +219,7 @@ mod tests {
         ));
     }
 
-    // amount_out = reserve_out  →  Err(InsufficientLiquidity)  (drains pool)
+    // amount_out = reserve_out  ->  Err(InsufficientLiquidity)  (drains pool)
     #[test]
     fn swap_exact_output_drain_errors() {
         assert!(matches!(
@@ -212,7 +228,7 @@ mod tests {
         ));
     }
 
-    // amount_out > reserve_out  →  Err(InsufficientLiquidity)
+    // amount_out > reserve_out  ->  Err(InsufficientLiquidity)
     #[test]
     fn swap_exact_output_exceeds_reserve_errors() {
         assert!(matches!(
@@ -221,7 +237,7 @@ mod tests {
         ));
     }
 
-    // fee_bps = FEE_DENOMINATOR  →  Err(InvalidFee)
+    // fee_bps = FEE_DENOMINATOR  ->  Err(InvalidFee)
     #[test]
     fn swap_exact_output_invalid_fee_errors() {
         assert!(matches!(
@@ -277,6 +293,8 @@ mod tests {
             prop_assert_eq!(xx - after, expected_fee);
         }
 
+        // new_reserve_in == reserve_in + amount_in (full input)
+        // new_reserve_out == reserve_out - amount_out
         #[test]
         fn reserve_identity(
             reserve_in in 1u64..(1u64 << 40),
@@ -316,6 +334,8 @@ mod tests {
             prop_assert!(new_k >= old_k);
         }
 
+        // (reserve_in + amount_in_after_fee) * new_reserve_out  >=  reserve_in * reserve_out
+        // Strictly stronger than "k did not shrink"; catches fee-bypass regressions.
         #[test]
         fn pre_fee_check(
             reserve_in in 1u64..(1u64 << 40),
@@ -355,7 +375,7 @@ mod tests {
             prop_assert_eq!(quote.new_reserve_out, reserve_out - amount_out);
         }
 
-        // new_k ≥ old_k
+        // new_k >= old_k
         #[test]
         fn exact_output_k_did_not_shrink(
             reserve_in  in 1u64..(1u64 << 50),
@@ -373,7 +393,7 @@ mod tests {
             prop_assert!(new_k >= old_k);
         }
 
-        // (reserve_in + amount_in_after_fee) · new_reserve_out  ≥  reserve_in · reserve_out
+        // (reserve_in + amount_in_after_fee) * new_reserve_out  >=  reserve_in * reserve_out
         #[test]
         fn exact_output_pre_fee_invariant(
             reserve_in  in 1u64..(1u64 << 50),

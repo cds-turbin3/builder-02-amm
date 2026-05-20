@@ -1,7 +1,16 @@
+//! LP math for initial mint, deposits, and withdrawals.
+
 use crate::{AmmMathError, LiquidityQuote, checked_mul_div_floor, integer_sqrt_floor, narrow_u64};
 
+/// Permanently-locked LP token amount on the first deposit.
+/// Bounds the first-LP inflation attack (attacker must commit and lose at least this much value).
 pub const MINIMUM_LIQUIDITY: u64 = 1_000;
 
+/// Initial liquidity provision (first deposit into a fresh pool).
+///
+/// Returns the LP tokens delivered to the user (`floor(sqrt(amount_a * amount_b)) - MINIMUM_LIQUIDITY`).
+/// The locked `MINIMUM_LIQUIDITY` tokens are a protocol constant; the Anchor program is responsible
+/// for the actual mint-to-burn-address transfer.
 pub fn initial_liquidity(amount_a: u64, amount_b: u64) -> Result<LiquidityQuote, AmmMathError> {
     if amount_a == 0 || amount_b == 0 {
         return Err(AmmMathError::ZeroAmount);
@@ -25,6 +34,11 @@ pub fn initial_liquidity(amount_a: u64, amount_b: u64) -> Result<LiquidityQuote,
     })
 }
 
+/// Add liquidity to an existing pool.
+///
+/// LP tokens minted = `min(floor(amount_a · total_lp_supply / reserve_a),
+/// floor(amount_b · total_lp_supply / reserve_b))`. The `min` rounds down to
+/// favor existing LPs (no dilution).
 pub fn add_liquidity(
     reserve_a: u64,
     reserve_b: u64,
@@ -56,6 +70,12 @@ pub fn add_liquidity(
     })
 }
 
+/// Remove liquidity by burning LP tokens.
+///
+/// `amount = floor(lp_tokens · reserve / total_lp_supply)` on both sides;
+/// both floors round down to favor the remaining pool. Returns
+/// `Err(InsufficientLiquidity)` if `lp_tokens > total_lp_supply` or if either
+/// computed amount rounds to zero.
 pub fn remove_liquidity(
     reserve_a: u64,
     reserve_b: u64,
@@ -286,7 +306,7 @@ mod tests {
             // lp_tokens = min(floor(amount_a * total_lp_supply / reserve_a),
             //                 floor(amount_b * total_lp_supply / reserve_b))
             #[test]
-            fn matches_spec_formula(
+            fn lp_tokens_equals_min(
                 reserve_a in 1u64..(1u64 << 30),
                 reserve_b in 1u64..(1u64 << 30),
                 total_lp_supply in 1u64..(1u64 << 30),
@@ -407,7 +427,7 @@ mod tests {
             // amount_a = floor(lp_tokens * reserve_a / total_lp_supply)
             // amount_b = floor(lp_tokens * reserve_b / total_lp_supply)
             #[test]
-            fn matches_spec_formula(
+            fn amounts_match_formula(
                 reserve_a in 1u64..(1u64 << 30),
                 reserve_b in 1u64..(1u64 << 30),
                 total_lp_supply in 1u64..(1u64 << 30),
