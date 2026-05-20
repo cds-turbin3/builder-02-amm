@@ -1,5 +1,9 @@
 use crate::AmmMathError;
 
+pub fn narrow_u64(n: u128) -> Result<u64, AmmMathError> {
+    n.try_into().map_err(|_| AmmMathError::Overflow)
+}
+
 pub fn div_ceil(numerator: u128, denominator: u128) -> Result<u128, AmmMathError> {
     if denominator == 0 {
         return Err(AmmMathError::ZeroDiv);
@@ -47,6 +51,20 @@ pub fn integer_sqrt_floor(value: u128) -> u128 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn narrow_u64_within_range() {
+        assert_eq!(narrow_u64(42).unwrap(), 42u64);
+        assert_eq!(narrow_u64(u64::MAX as u128).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn narrow_u64_overflow() {
+        assert!(matches!(
+            narrow_u64(u64::MAX as u128 + 1),
+            Err(AmmMathError::Overflow)
+        ));
+    }
 
     // ⌈7/3⌉ = 3
     #[test]
