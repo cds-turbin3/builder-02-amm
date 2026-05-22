@@ -32,16 +32,7 @@ fn swap_with_truncated_amount_in_returns_insufficient_output() {
 
     let bob = world.make_user(10_000_000_000, 10, 0);
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 1,
@@ -83,18 +74,7 @@ fn drain_to_minimum_liquidity_preserves_lock_vault_and_reserves() {
     //   amount_b = floor(1_000 * 4_000 / 2_000) = 2_000
     //   alice's LP after burn = 0; pool's LP supply after burn = 1_000 (lp_vault).
     let burn = world.ctx.program().build_ix(
-        RemoveLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.remove_liquidity_bundle(&alice),
         amm::instruction::RemoveLiquidity {
             lp_burn: 1_000,
             min_a: 500,

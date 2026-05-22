@@ -291,16 +291,7 @@ fn update_fee_propagates_to_next_swap() {
     // (per test_swap.rs). 330 != 360 proves the fee actually changed.
     let bob = world.make_user(10_000_000_000, 1_000, 0);
     let swap = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 100,

@@ -89,16 +89,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
 
     // ----- Step 2: bob tries to swap, rejected with PoolLocked -----
     let bob_swap = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 10_000,
