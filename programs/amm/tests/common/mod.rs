@@ -9,7 +9,7 @@
 #![cfg(feature = "test-helpers")]
 #![allow(dead_code)]
 
-use amm::{AddLiquidityBundle, InitializeBundle, SetLockedBundle, CONFIG_SEED, LP_MINT_SEED};
+use amm::{AddLiquidityBundle, InitializeBundle, RemoveLiquidityBundle, SetLockedBundle, SwapBundle, CONFIG_SEED, LP_MINT_SEED};
 use anchor_litesvm::{
     Aliases, AnchorContext, AnchorLiteSVM, Keypair, Pubkey, Signer, TestHelpers, TransactionHelpers,
 };
@@ -52,6 +52,50 @@ impl Pool {
             vault_x,
             vault_y,
             lp_vault,
+        }
+    }
+
+    pub fn swap_bundle(&self, user: &UserAccounts) -> SwapBundle {
+        SwapBundle {
+            user: user.pubkey(),
+            mint_x: self.mint_x,
+            mint_y: self.mint_y,
+            config: self.config,
+            vault_x: self.vault_x,
+            vault_y: self.vault_y,
+            user_x: user.ata_x,
+            user_y: user.ata_y,
+        }
+    }
+
+    pub fn add_liquidity_bundle(&self, user: &UserAccounts) -> AddLiquidityBundle {
+        AddLiquidityBundle {
+            user: user.pubkey(),
+            mint_x: self.mint_x,
+            mint_y: self.mint_y,
+            config: self.config,
+            mint_lp: self.mint_lp,
+            vault_x: self.vault_x,
+            vault_y: self.vault_y,
+            lp_vault: self.lp_vault,
+            user_x: user.ata_x,
+            user_y: user.ata_y,
+            user_lp: user.ata_lp(&self.mint_lp),
+        }
+    }
+
+    pub fn remove_liquidity_bundle(&self, user: &UserAccounts) -> RemoveLiquidityBundle {
+        RemoveLiquidityBundle {
+            user: user.pubkey(),
+            mint_x: self.mint_x,
+            mint_y: self.mint_y,
+            config: self.config,
+            mint_lp: self.mint_lp,
+            vault_x: self.vault_x,
+            vault_y: self.vault_y,
+            user_x: user.ata_x,
+            user_y: user.ata_y,
+            user_lp: user.ata_lp(&self.mint_lp),
         }
     }
 }

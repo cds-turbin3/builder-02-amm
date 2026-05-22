@@ -24,16 +24,7 @@ fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
     //   amount_out = floor(99 * 4_000 / (1_000 + 99)) = floor(396_000 / 1_099) = 360
     let bob = world.make_user(10_000_000_000, 1_000, 0);
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 100,
@@ -75,16 +66,7 @@ fn exact_output_swap_a_to_b_pays_calculated_input() {
     //   amount_in = ceil(99 * 10_000 / 9_970) = 100
     let bob = world.make_user(10_000_000_000, 1_000, 0);
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactOutput {
                 amount_out: 360,

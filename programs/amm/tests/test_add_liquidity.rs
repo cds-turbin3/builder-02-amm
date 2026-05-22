@@ -19,19 +19,7 @@ fn first_deposit_mints_to_user_and_locks_minimum_liquidity() {
     // (a, b) = (1_000, 4_000) -> sqrt(4_000_000) = 2_000 total LP minted.
     // User receives 2_000 - MINIMUM_LIQUIDITY = 1_000; lp_vault gets 1_000.
     let ix = world.ctx.program().build_ix(
-        AddLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            lp_vault: pool.lp_vault,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.add_liquidity_bundle(&alice),
         amm::instruction::AddLiquidity {
             amount_a: 1_000,
             amount_b: 4_000,
@@ -81,19 +69,7 @@ fn subsequent_deposit_uses_floor_min_formula() {
     // min = 1_000 -> bob gets 1_000 LP.
     let bob = world.make_user(10_000_000_000, 5_000, 20_000);
     let ix = world.ctx.program().build_ix(
-        AddLiquidityBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            lp_vault: pool.lp_vault,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-            user_lp: bob.ata_lp(&pool.mint_lp),
-        },
+        pool.add_liquidity_bundle(&bob),
         amm::instruction::AddLiquidity {
             amount_a: 500,
             amount_b: 2_000,
@@ -142,19 +118,7 @@ fn add_liquidity_rejects_when_lp_below_min() {
     // 1_001 must reject.
     let alice = world.make_user(10_000_000_000, 10_000, 40_000);
     let ix = world.ctx.program().build_ix(
-        AddLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            lp_vault: pool.lp_vault,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.add_liquidity_bundle(&alice),
         amm::instruction::AddLiquidity {
             amount_a: 1_000,
             amount_b: 4_000,
@@ -193,19 +157,7 @@ fn add_liquidity_rejects_when_pool_locked() {
     world.set_locked(&admin, &pool, true);
 
     let ix = world.ctx.program().build_ix(
-        AddLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            lp_vault: pool.lp_vault,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.add_liquidity_bundle(&alice),
         amm::instruction::AddLiquidity {
             amount_a: 1_000,
             amount_b: 4_000,

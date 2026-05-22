@@ -24,18 +24,7 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
     //   amount_a = floor(500 * 1_000 / 2_000) = 250
     //   amount_b = floor(500 * 4_000 / 2_000) = 1_000
     let ix = world.ctx.program().build_ix(
-        RemoveLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.remove_liquidity_bundle(&alice),
         amm::instruction::RemoveLiquidity {
             lp_burn: 500,
             min_a: 250,
@@ -84,18 +73,7 @@ fn remove_liquidity_rejects_when_amount_below_min() {
 
     // Burning 500 LP returns (250, 1_000). Demanding min_a = 300 must reject.
     let ix = world.ctx.program().build_ix(
-        RemoveLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.remove_liquidity_bundle(&alice),
         amm::instruction::RemoveLiquidity {
             lp_burn: 500,
             min_a: 300,
@@ -135,18 +113,7 @@ fn remove_liquidity_rejects_when_pool_locked() {
     world.set_locked(&admin, &pool, true);
 
     let ix = world.ctx.program().build_ix(
-        RemoveLiquidityBundle {
-            user: alice.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: alice.ata_x,
-            user_y: alice.ata_y,
-            user_lp: alice.ata_lp(&pool.mint_lp),
-        },
+        pool.remove_liquidity_bundle(&alice),
         amm::instruction::RemoveLiquidity {
             lp_burn: 500,
             min_a: 0,

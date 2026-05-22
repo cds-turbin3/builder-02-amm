@@ -28,16 +28,7 @@ fn k_of(world: &common::Bootstrap, pool: &Pool) -> u128 {
 
 fn swap_a_to_b(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts, amount_in: u64) {
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: user.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: user.ata_x,
-            user_y: user.ata_y,
-        },
+        pool.swap_bundle(user),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in,
