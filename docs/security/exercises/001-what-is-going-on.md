@@ -1,0 +1,211 @@
+# Trace exercise 001: What is going on here?
+
+## Setup
+
+You're looking at the captured `print_logs_structured()` output from running a single test against the toy AMM. The relevant facts you need:
+
+- The amm program has four trade-path instructions (`initialize`, `add_liquidity`, `remove_liquidity`, `swap`) and three admin-only instructions (`update_fee`, `set_locked`, `update_authority`).
+- Trade-path instructions check `Config.locked` and return `PoolLocked` (Anchor error 6008) when the pool is locked.
+- Admin instructions are *not* gated by `locked`; the authority can always call them. (This carve-out exists so a locked-and-renounced pool can't get permanently stuck.)
+- SPL Token's `TransferChecked` moves a balance from one token account to another, signed by the source's authority.
+- `print_logs_structured()` shows one tree per transaction, with `[N]` indicating CPI stack depth and `✓` / `✗` for success / failure. The number next to each frame is the cumulative CU consumed by that frame and its CPI subtree, so a root frame's CU equals the transaction's total; the footer repeats that total as `Compute Units` and gives the transaction `Fee`. Failed frames render two children inside the frame subtree: a raw `Error: custom program error: 0x<code>` line and an `AnchorError thrown in <path>:<line>` block carrying the decoded `Error Code` / `Number` / `Message`; the trailing `Error: InstructionError(<ix_index>, Custom(<code>))` sits below the tree at the transaction level.
+- The `Compute Units` numbers in the trace below are illustrative, not normative<sup>*</sup>. Reason from the trees' *shapes* and approximate magnitudes, not the exact numbers.
+
+Three actors appear in this test:
+
+- **alice** is a liquidity provider. She has deposited into the pool.
+- **bob** is an honest trader trying to swap.
+- **admin** is the pool's authority, the signer registered on `Config.authority`.
+
+Below is the entire output from the test, in chronological order. Six transactions land. The first two are setup (you can skim them). The interesting ones start at `[A]`. Read carefully.
+
+## The output
+
+```
+[setup-1: initialize the pool]
+=== Structured Transaction Logs ===
+Transaction
+└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 77420cu
+    ├── System::CreateAccount [2] ✓
+    ├── Token::InitializeMint2 [2] ✓ 201cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── System::CreateAccount [2] ✓
+Compute Units: 77420
+Fee: 5000 lamports
+====================================
+
+[setup-2: alice deposits liquidity]
+=== Structured Transaction Logs ===
+Transaction
+└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 64652cu
+    ├── AssociatedToken::Create [2] ✓ 16416cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::MintTo [2] ✓ 119cu
+    └── Token::MintTo [2] ✓ 119cu
+Compute Units: 64652
+Fee: 5000 lamports
+====================================
+
+[A]
+=== Structured Transaction Logs ===
+Transaction
+└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 4079cu
+Compute Units: 4079
+Fee: 5000 lamports
+====================================
+
+[B]
+=== Structured Transaction Logs ===
+Transaction
+└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✗ 23414cu
+    ├── Error: custom program error: 0x1778
+    └── AnchorError thrown in programs/amm/src/instructions/swap.rs:72
+         Error Code: PoolLocked
+         Error Number: 6008
+         Error Message: Pool is locked.
+Error: InstructionError(0, Custom(6008))
+Compute Units: 23414
+Fee: 5000 lamports
+====================================
+
+[C]
+=== Structured Transaction Logs ===
+Transaction
+├── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 4081cu
+├── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 23615cu
+│   ├── Token::TransferChecked [2] ✓ 105cu
+│   └── Token::TransferChecked [2] ✓ 105cu
+└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 4079cu
+Compute Units: 31775
+Fee: 5000 lamports
+====================================
+
+[D]
+=== Structured Transaction Logs ===
+Transaction
+└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✗ 23414cu
+    ├── Error: custom program error: 0x1778
+    └── AnchorError thrown in programs/amm/src/instructions/swap.rs:72
+         Error Code: PoolLocked
+         Error Number: 6008
+         Error Message: Pool is locked.
+Error: InstructionError(0, Custom(6008))
+Compute Units: 23414
+Fee: 5000 lamports
+====================================
+```
+
+## The question
+
+**What is going on in transactions [A], [B], [C], and [D]? And why is one of them concerning?**
+
+Reason from the trees alone first. The setup gave you the program's invariants; the rest you have to read off the trees and the chronological order. Don't peek at the discussion below until you've worked out at least an answer to:
+
+- What is transaction [C] doing? Specifically, why three sibling roots in one transaction?
+- Why does [D] fail with `PoolLocked` if [C] just succeeded?
+- Who could possibly have signed [C], given what we know about which actors can call which instructions?
+
+## Sub-questions (use these to break it apart)
+
+- How many distinct top-level instructions are in transaction [C]? Count the `[1]` frames.
+- All three roots in [C] show the same program ID. Is that the amm program or something else?
+- Look at compute units. [A]'s top frame is ~4080 CU and has zero CPI children. [C]'s first and third roots are ~4080 CU each and also have zero CPI children. What kind of instruction consumes that little CU with no children? (Compare against [C]'s middle root, which has two `Token::TransferChecked` calls.)
+- [B] and [D] are byte-identical in shape (same error, similar CU). Bob is the obvious candidate signer. What was the pool's state when each was attempted?
+- The PoolLocked error in [B] and [D] points at `programs/amm/src/instructions/swap.rs:72`. That's the line `require!(!self.config.locked, AmmError::PoolLocked)` inside the `swap` handler. What does its existence tell you about the pool state when [B] and [D] were attempted?
+- And the corollary: what was the pool's state during [C]'s middle root, given that the middle root *also* invokes `swap` (the two `TransferChecked` CPIs are its in-leg and out-leg) and *did not* fail with `PoolLocked`?
+- Two `TransferChecked` calls in the middle of [C]: user → vault, vault → user. Whose user? Whose vault?
+- Look at the order in [C]: cheap state-mutation → expensive swap → cheap state-mutation. What single shape does that match?
+
+## Discussion
+
+<details>
+<summary>Click to reveal walkthrough</summary>
+
+### What each transaction is
+
+- **[A]** is a tiny one-frame tx with no CPIs. ~4080 CU is consistent with a pure state mutation (the handler reads/writes `Config`, no token movement, no init). The most likely candidate is `set_locked(true)`: an admin-only instruction signed by the authority. It explains why subsequent transactions see `locked == true`.
+
+- **[B]** is bob (or some non-admin user) trying to `swap` and being rejected. The `[1] ✗` with no CPIs means the handler errored *before* invoking any other program. PoolLocked is the specific error; line 72 of `swap.rs` is the `require!(!self.config.locked, ...)` check. So the pool is locked, [B] is a trade-path call, and the locked-check fired immediately. Confirms [A] set `locked = true`.
+
+- **[C]** is the smoking gun. **Three sibling top-level frames in one transaction.** The amm program ID appears three times. The first and third frames look exactly like [A] (~4080 CU, zero CPIs, pure state mutation). The middle frame has two `Token::TransferChecked` calls, which is what `swap` does (user → vault, vault → user). The shape is unmistakable: `[set_locked, swap, set_locked]`, all in one tx, all signed by the same signer.
+
+  Who could have signed [C]? `set_locked` is admin-only (`require_keys_eq!(self.authority.key(), config.authority, Unauthorized)`). The only signer who can call `set_locked` is `Config.authority` — by setup, that's **admin**. So [C] is the authority bundling an unlock + their own swap + a relock in one atomic transaction.
+
+- **[D]** is the second `swap` attempt from a non-admin user. Same failure shape as [B]: `[1] ✗`, no CPIs, PoolLocked. Even though the authority just executed a swap in [C], the pool is locked again by the time [D] arrives, because [C]'s third frame is `set_locked(true)`.
+
+### Why [C] is concerning
+
+The lock is supposed to mean "the pool is paused; nobody is trading." Bob, looking at the on-chain `Config.locked` flag between transactions, sees `true` before [B], `true` after [B], `true` before [D], `true` after [D]. From his vantage point, the pool never unlocked.
+
+But it did. [C]'s middle frame is a successful swap, which means at the instant it ran, `Config.locked == false`. The authority opened the gate, walked through, and closed it again, all within a transaction's atomic boundary. No other user had a window to interact. Honest users see only failed attempts; the authority captured a trade.
+
+Failure modes this enables:
+
+- **Stale-price arbitrage.** Admin observes off-chain that the market price moved against the pool, freezes the pool to prevent LPs from rebalancing, atomically takes the favorable side of the trade against the now-stale on-chain reserves, freezes again. LPs absorb the loss without ever having a chance to act.
+- **Selective service.** Admin runs friendly trades for off-chain counterparties through the "locked" pool while strangers see `PoolLocked`.
+- **MEV-protection theater.** A pool marketed as "pause-on-suspicious-activity" can't actually deliver that protection, because the pauser is also a privileged trader.
+
+### How the structured logs surfaced this
+
+The vulnerability is invisible in plain Solana log strings: there, it's "Program X invoke [1]" three times, with no indication that one of them is `set_locked` vs `swap`. The structured tree makes it readable in three ways:
+
+1. **Multiple sibling roots = multi-ix tx.** Solana's log format makes the depth implicit; the tree makes it explicit. You can count `[1]` frames at a glance.
+2. **Instruction-name decoding** (`Token::TransferChecked`) identifies the swap by its on-chain fingerprint without us having to know in advance which frame is the swap.
+3. **CPI counts.** Pure state mutations (like `set_locked`) have zero children. Token-moving instructions have CPIs. The shape `[cheap, expensive-with-token-children, cheap]` jumps out.
+
+### How the test made this concrete
+
+The test that produced this output is `programs/amm/tests/test_lock_unlock_attack.rs`. Its critical assertion is:
+
+```rust
+let r = world
+    .ctx
+    .svm
+    .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin])
+    .unwrap();
+r.print_logs_structured();
+assert!(
+    r.is_success(),
+    "the three-ix atomic tx is currently allowed; this is the bug"
+);
+```
+
+The test *passes*, which is the bug. A passing test for an attack the spec implicitly forbids is the on-chain demonstration that the implementation diverged from the spec's intent. The fix is in `docs/security/responses/001-lock-unlock-timing-attack.md`: introduce a timelock on unlock so [C]'s middle frame fails with `PoolLocked` (because the unlock hasn't taken effect yet), which causes the entire 3-ix transaction to roll back atomically and the attack vector to close.
+
+</details>
+
+## <sup>*</sup> Why CU values drift between runs
+
+Solana's compute-unit consumption is deterministic per execution — given the same binary, same accounts, and same instruction data, you get the same CU. The trace above looks reproducible, but it isn't, because the inputs aren't held fixed across test runs.
+
+The drift comes from Anchor's account validation. Constraints like `associated_token::mint = ..., associated_token::authority = ...` call `find_program_address` to derive the ATA at validation time. `find_program_address` iterates bumps from 255 downward until it finds an off-curve key; the iteration count varies from 1 to ~50+ depending on the participating pubkeys' bit patterns, and each iteration costs CU. So an instruction that validates ATAs consumes a different amount of CU each time those ATAs are derived from different mints or different user keypairs.
+
+The test fixtures here use `Keypair::new()` (OS-random) for mints and users, so each run generates fresh pubkeys, those pubkeys produce different ATA bumps, and the per-frame CU drifts by a few thousand. Frames that don't validate ATAs (`set_locked` at ~4,080 CU; the bookend frames of the attack tx) are stable. Frames that do (`add_liquidity`, `swap`, all the failure paths through the swap handler) float.
+
+For background on the deterministic-fixture approach we considered and rejected (because it would have narrowed test coverage to one specific bump path), see the discussion captured in the project's `NOTES`.
+
+## See also
+
+- The full vulnerability writeup: [`../issues/001-lock-unlock-timing-attack.md`](../issues/001-lock-unlock-timing-attack.md)
+- The proposed mitigation: [`../responses/001-lock-unlock-timing-attack.md`](../responses/001-lock-unlock-timing-attack.md)
+- The test that produced this output: `programs/amm/tests/test_lock_unlock_attack.rs`
+- To reproduce: `just tt --test test_lock_unlock_attack`
