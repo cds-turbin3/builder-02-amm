@@ -24,8 +24,9 @@ Below is the entire output from the test, in chronological order. Six transactio
 ```
 [setup-1: initialize the pool]
 === Structured Transaction Logs ===
-Transaction
-└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 77420cu
+Instruction: CYbYnHW7…2yf5
+Transaction  signers=[6PqHNGix…xUVG]
+└── CYbYnHW7…2yf5 [1] ✓ 86420cu  signer=6PqHNGix…xUVG
     ├── System::CreateAccount [2] ✓
     ├── Token::InitializeMint2 [2] ✓ 201cu
     ├── AssociatedToken::Create [2] ✓ 13517cu
@@ -33,7 +34,7 @@ Transaction
     │   ├── System::CreateAccount [3] ✓
     │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
     │   └── Token::InitializeAccount3 [3] ✓ 235cu
-    ├── AssociatedToken::Create [2] ✓ 13517cu
+    ├── AssociatedToken::Create [2] ✓ 18017cu
     │   ├── Token::GetAccountDataSize [3] ✓ 183cu
     │   ├── System::CreateAccount [3] ✓
     │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
@@ -44,15 +45,16 @@ Transaction
     │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
     │   └── Token::InitializeAccount3 [3] ✓ 235cu
     └── System::CreateAccount [2] ✓
-Compute Units: 77420
+Compute Units (this run): 86420
 Fee: 5000 lamports
 ====================================
 
 [setup-2: alice deposits liquidity]
 === Structured Transaction Logs ===
-Transaction
-└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 64652cu
-    ├── AssociatedToken::Create [2] ✓ 16416cu
+Instruction: CYbYnHW7…2yf5
+Transaction  signers=[8r9fJP9H…bjUA]
+└── CYbYnHW7…2yf5 [1] ✓ 60121cu  signer=8r9fJP9H…bjUA
+    ├── AssociatedToken::Create [2] ✓ 13416cu
     │   ├── Token::GetAccountDataSize [3] ✓ 183cu
     │   ├── System::CreateAccount [3] ✓
     │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
@@ -61,56 +63,75 @@ Transaction
     ├── Token::TransferChecked [2] ✓ 105cu
     ├── Token::MintTo [2] ✓ 119cu
     └── Token::MintTo [2] ✓ 119cu
-Compute Units: 64652
+Compute Units (this run): 60121
 Fee: 5000 lamports
 ====================================
 
 [A]
 === Structured Transaction Logs ===
-Transaction
-└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 4079cu
-Compute Units: 4079
+Instruction: amm
+Transaction  signers=[admin]
+└── amm [1] ✓ 4079cu  signer=admin
+Compute Units (this run): 4079
 Fee: 5000 lamports
+
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  admin = 6PqHNGixYAxRvMkzuMgEP1DjZzHZhGKVaAV9fSnxxUVG
 ====================================
 
 [B]
 === Structured Transaction Logs ===
-Transaction
-└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✗ 23414cu
+Instruction: amm
+Transaction  signers=[bob]
+└── amm [1] ✗ 32414cu  signer=bob
     ├── Error: custom program error: 0x1778
     └── AnchorError thrown in programs/amm/src/instructions/swap.rs:72
          Error Code: PoolLocked
          Error Number: 6008
          Error Message: Pool is locked.
 Error: InstructionError(0, Custom(6008))
-Compute Units: 23414
+Compute Units (this run): 32414
 Fee: 5000 lamports
+
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  bob = Dj4q3rbrubSeCSo4sg8EaQk9BLMX2AHR5etWeZZZKNNh
 ====================================
 
 [C]
 === Structured Transaction Logs ===
-Transaction
-├── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 4081cu
-├── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 23615cu
+Transaction  signers=[admin]
+├── amm [1] ✓ 4081cu  signer=admin
+├── amm [1] ✓ 28115cu  signer=admin
 │   ├── Token::TransferChecked [2] ✓ 105cu
 │   └── Token::TransferChecked [2] ✓ 105cu
-└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✓ 4079cu
-Compute Units: 31775
+└── amm [1] ✓ 4079cu  signer=admin
+Compute Units (this run): 36275
 Fee: 5000 lamports
+
+Legend (2):
+  admin = 6PqHNGixYAxRvMkzuMgEP1DjZzHZhGKVaAV9fSnxxUVG
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
 ====================================
 
 [D]
 === Structured Transaction Logs ===
-Transaction
-└── CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5 [1] ✗ 23414cu
+Instruction: amm
+Transaction  signers=[bob]
+└── amm [1] ✗ 32414cu  signer=bob
     ├── Error: custom program error: 0x1778
     └── AnchorError thrown in programs/amm/src/instructions/swap.rs:72
          Error Code: PoolLocked
          Error Number: 6008
          Error Message: Pool is locked.
 Error: InstructionError(0, Custom(6008))
-Compute Units: 23414
+Compute Units (this run): 32414
 Fee: 5000 lamports
+
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  bob = Dj4q3rbrubSeCSo4sg8EaQk9BLMX2AHR5etWeZZZKNNh
 ====================================
 ```
 
