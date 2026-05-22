@@ -1854,6 +1854,7 @@ dependencies = [
  "litesvm",
  "litesvm-token",
  "solana-keypair",
+ "solana-message",
  "solana-program",
  "solana-program-pack",
  "solana-signer",
