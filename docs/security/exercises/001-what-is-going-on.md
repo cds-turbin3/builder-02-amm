@@ -24,9 +24,9 @@ Below is the entire output from the test, in chronological order. Six transactio
 ```
 [setup-1: initialize the pool]
 === Structured Transaction Logs ===
-Instruction: CYbYnHW7…2yf5
+Instruction: CYbYnHW7…2yf5::Initialize
 Transaction  signers=[6PqHNGix…xUVG]
-└── CYbYnHW7…2yf5 [1] ✓ 86420cu  signer=6PqHNGix…xUVG
+└── CYbYnHW7…2yf5::Initialize [1] ✓ 86420cu  signer=6PqHNGix…xUVG
     ├── System::CreateAccount [2] ✓
     ├── Token::InitializeMint2 [2] ✓ 201cu
     ├── AssociatedToken::Create [2] ✓ 13517cu
@@ -51,9 +51,9 @@ Fee: 5000 lamports
 
 [setup-2: alice deposits liquidity]
 === Structured Transaction Logs ===
-Instruction: CYbYnHW7…2yf5
+Instruction: CYbYnHW7…2yf5::AddLiquidity
 Transaction  signers=[8r9fJP9H…bjUA]
-└── CYbYnHW7…2yf5 [1] ✓ 60121cu  signer=8r9fJP9H…bjUA
+└── CYbYnHW7…2yf5::AddLiquidity [1] ✓ 60121cu  signer=8r9fJP9H…bjUA
     ├── AssociatedToken::Create [2] ✓ 13416cu
     │   ├── Token::GetAccountDataSize [3] ✓ 183cu
     │   ├── System::CreateAccount [3] ✓
@@ -69,9 +69,9 @@ Fee: 5000 lamports
 
 [A]
 === Structured Transaction Logs ===
-Instruction: amm
+Instruction: amm::SetLocked
 Transaction  signers=[admin]
-└── amm [1] ✓ 4079cu  signer=admin
+└── amm::SetLocked [1] ✓ 4079cu  signer=admin
 Compute Units (this run): 4079
 Fee: 5000 lamports
 
@@ -82,9 +82,9 @@ Legend (2):
 
 [B]
 === Structured Transaction Logs ===
-Instruction: amm
+Instruction: amm::Swap
 Transaction  signers=[bob]
-└── amm [1] ✗ 32414cu  signer=bob
+└── amm::Swap [1] ✗ 32414cu  signer=bob
     ├── Error: custom program error: 0x1778
     └── AnchorError thrown in programs/amm/src/instructions/swap.rs:72
          Error Code: PoolLocked
@@ -102,11 +102,11 @@ Legend (2):
 [C]
 === Structured Transaction Logs ===
 Transaction  signers=[admin]
-├── amm [1] ✓ 4081cu  signer=admin
-├── amm [1] ✓ 28115cu  signer=admin
+├── amm::SetLocked [1] ✓ 4081cu  signer=admin
+├── amm::Swap [1] ✓ 28115cu  signer=admin
 │   ├── Token::TransferChecked [2] ✓ 105cu
 │   └── Token::TransferChecked [2] ✓ 105cu
-└── amm [1] ✓ 4079cu  signer=admin
+└── amm::SetLocked [1] ✓ 4079cu  signer=admin
 Compute Units (this run): 36275
 Fee: 5000 lamports
 
@@ -117,9 +117,9 @@ Legend (2):
 
 [D]
 === Structured Transaction Logs ===
-Instruction: amm
+Instruction: amm::Swap
 Transaction  signers=[bob]
-└── amm [1] ✗ 32414cu  signer=bob
+└── amm::Swap [1] ✗ 32414cu  signer=bob
     ├── Error: custom program error: 0x1778
     └── AnchorError thrown in programs/amm/src/instructions/swap.rs:72
          Error Code: PoolLocked
@@ -148,13 +148,13 @@ Reason from the trees alone first. The setup gave you the program's invariants; 
 ## Sub-questions (use these to break it apart)
 
 - How many distinct top-level instructions are in transaction [C]? Count the `[1]` frames.
-- All three roots in [C] show the same program ID. Is that the amm program or something else?
-- Look at compute units. [A]'s top frame is ~4080 CU and has zero CPI children. [C]'s first and third roots are ~4080 CU each and also have zero CPI children. What kind of instruction consumes that little CU with no children? (Compare against [C]'s middle root, which has two `Token::TransferChecked` calls.)
-- [B] and [D] are byte-identical in shape (same error, similar CU). Bob is the obvious candidate signer. What was the pool's state when each was attempted?
+- All three roots in [C] resolve to the same program (`amm`). Two of them are `amm::SetLocked`, one is `amm::Swap`. What ordering does that produce, reading left to right?
+- The CU and CPI shape corroborates the names: `amm::SetLocked` frames are ~4080 CU with zero CPI children (pure state mutation), while `amm::Swap` in [C] is ~28000 CU with two `Token::TransferChecked` children (the swap's in-leg and out-leg). Reading the names confirms a reading you could also have inferred from the shape alone.
+- [B] and [D] are byte-identical in shape (same name `amm::Swap`, same error, similar CU). Bob is the obvious candidate signer. What was the pool's state when each was attempted?
 - The PoolLocked error in [B] and [D] points at `programs/amm/src/instructions/swap.rs:72`. That's the line `require!(!self.config.locked, AmmError::PoolLocked)` inside the `swap` handler. What does its existence tell you about the pool state when [B] and [D] were attempted?
-- And the corollary: what was the pool's state during [C]'s middle root, given that the middle root *also* invokes `swap` (the two `TransferChecked` CPIs are its in-leg and out-leg) and *did not* fail with `PoolLocked`?
-- Two `TransferChecked` calls in the middle of [C]: user → vault, vault → user. Whose user? Whose vault?
-- Look at the order in [C]: cheap state-mutation → expensive swap → cheap state-mutation. What single shape does that match?
+- And the corollary: what was the pool's state during [C]'s middle root, given that the middle root is `amm::Swap` and *did not* fail with `PoolLocked`?
+- Two `Token::TransferChecked` calls inside the `amm::Swap` of [C]: user → vault, vault → user. Whose user? Whose vault?
+- Look at the order in [C]: `SetLocked` → `Swap` → `SetLocked`. What single pattern does that match?
 
 ## Discussion
 
@@ -163,15 +163,17 @@ Reason from the trees alone first. The setup gave you the program's invariants; 
 
 ### What each transaction is
 
-- **[A]** is a tiny one-frame tx with no CPIs. ~4080 CU is consistent with a pure state mutation (the handler reads/writes `Config`, no token movement, no init). The most likely candidate is `set_locked(true)`: an admin-only instruction signed by the authority. It explains why subsequent transactions see `locked == true`.
+The names spell out most of it. The CU and CPI shape corroborate the names; they would also have been enough on their own if the names were not available (as they were not until anchor-litesvm started parsing Anchor's `Program log: Instruction:` convention).
 
-- **[B]** is bob (or some non-admin user) trying to `swap` and being rejected. The `[1] ✗` with no CPIs means the handler errored *before* invoking any other program. PoolLocked is the specific error; line 72 of `swap.rs` is the `require!(!self.config.locked, ...)` check. So the pool is locked, [B] is a trade-path call, and the locked-check fired immediately. Confirms [A] set `locked = true`.
+- **[A]** is `amm::SetLocked`, signed by admin. The frame is a single root with zero CPI children at ~4080 CU; that is consistent with a pure state mutation (the handler reads/writes `Config`, no token movement, no init). It explains why subsequent transactions see `locked == true`.
 
-- **[C]** is the smoking gun. **Three sibling top-level frames in one transaction.** The amm program ID appears three times. The first and third frames look exactly like [A] (~4080 CU, zero CPIs, pure state mutation). The middle frame has two `Token::TransferChecked` calls, which is what `swap` does (user → vault, vault → user). The shape is unmistakable: `[set_locked, swap, set_locked]`, all in one tx, all signed by the same signer.
+- **[B]** is `amm::Swap`, signed by bob. The `[1] ✗` with no CPIs means the handler errored *before* invoking any other program. PoolLocked is the specific error; line 72 of `swap.rs` is the `require!(!self.config.locked, ...)` check. The pool is locked, [B] is a trade-path call, and the locked-check fired immediately. Confirms [A] set `locked = true`.
 
-  Who could have signed [C]? `set_locked` is admin-only (`require_keys_eq!(self.authority.key(), config.authority, Unauthorized)`). The only signer who can call `set_locked` is `Config.authority` — by setup, that's **admin**. So [C] is the authority bundling an unlock + their own swap + a relock in one atomic transaction.
+- **[C]** is the smoking gun. **Three sibling top-level frames in one transaction**, all signed by admin: `amm::SetLocked` → `amm::Swap` → `amm::SetLocked`. The first and third frames look exactly like [A] (~4080 CU, zero CPIs, pure state mutation). The middle frame has two `Token::TransferChecked` calls, the canonical fingerprint of a swap (user → vault, vault → user).
 
-- **[D]** is the second `swap` attempt from a non-admin user. Same failure shape as [B]: `[1] ✗`, no CPIs, PoolLocked. Even though the authority just executed a swap in [C], the pool is locked again by the time [D] arrives, because [C]'s third frame is `set_locked(true)`.
+  Who could have signed [C]? `set_locked` is admin-only (`require_keys_eq!(self.authority.key(), config.authority, Unauthorized)`). The only signer who can call `set_locked` is `Config.authority`: by setup, that's **admin**. So [C] is the authority bundling an unlock + their own swap + a relock in one atomic transaction.
+
+- **[D]** is another `amm::Swap` attempt by bob. Byte-identical to [B] in shape and error. Even though the authority just executed a swap in [C], the pool is locked again by the time [D] arrives, because [C]'s third frame is `set_locked(true)`.
 
 ### Why [C] is concerning
 
@@ -187,11 +189,11 @@ Failure modes this enables:
 
 ### How the structured logs surfaced this
 
-The vulnerability is invisible in plain Solana log strings: there, it's "Program X invoke [1]" three times, with no indication that one of them is `set_locked` vs `swap`. The structured tree makes it readable in three ways:
+The vulnerability is invisible in plain Solana log strings: there, it's "Program X invoke [1]" three times, with no indication that one of them is `set_locked` vs `swap` until you cross-reference the `Program log: Instruction:` lines by hand and reconstruct the depth tree by pairing `invoke` and `success` markers. The structured tree makes it readable in three ways:
 
 1. **Multiple sibling roots = multi-ix tx.** Solana's log format makes the depth implicit; the tree makes it explicit. You can count `[1]` frames at a glance.
-2. **Instruction-name decoding** (`Token::TransferChecked`) identifies the swap by its on-chain fingerprint without us having to know in advance which frame is the swap.
-3. **CPI counts.** Pure state mutations (like `set_locked`) have zero children. Token-moving instructions have CPIs. The shape `[cheap, expensive-with-token-children, cheap]` jumps out.
+2. **Instruction-name decoding for every frame.** Well-known programs (SPL Token, ATA, System) are decoded from their discriminator (`Token::TransferChecked`); Anchor user programs (like `amm`) are decoded from the `Program log: Instruction: <Name>` line that Anchor's generated dispatcher emits on every handler entry. The bug pattern reads out by name directly: `SetLocked` → `Swap` → `SetLocked`.
+3. **CPI counts as confirmation.** Pure state mutations (`amm::SetLocked`) have zero children. Token-moving instructions (`amm::Swap`) have CPIs. The shape `[cheap, expensive-with-token-children, cheap]` is consistent with the names, and would have been enough to identify the pattern even without them.
 
 ### How the test made this concrete
 
@@ -216,7 +218,7 @@ The test *passes*, which is the bug. A passing test for an attack the spec impli
 
 ## <sup>*</sup> Why CU values drift between runs
 
-Solana's compute-unit consumption is deterministic per execution — given the same binary, same accounts, and same instruction data, you get the same CU. The trace above looks reproducible, but it isn't, because the inputs aren't held fixed across test runs.
+Solana's compute-unit consumption is deterministic per execution: given the same binary, same accounts, and same instruction data, you get the same CU. The trace above looks reproducible, but it isn't, because the inputs aren't held fixed across test runs.
 
 The drift comes from Anchor's account validation. Constraints like `associated_token::mint = ..., associated_token::authority = ...` call `find_program_address` to derive the ATA at validation time. `find_program_address` iterates bumps from 255 downward until it finds an off-curve key; the iteration count varies from 1 to ~50+ depending on the participating pubkeys' bit patterns, and each iteration costs CU. So an instruction that validates ATAs consumes a different amount of CU each time those ATAs are derived from different mints or different user keypairs.
 
