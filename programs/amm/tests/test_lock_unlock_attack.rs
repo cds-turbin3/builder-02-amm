@@ -79,11 +79,9 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .ctx
         .svm
         .send_ok(lock_ix, &[&admin], &world.aliases)
-        .tap(|r| {
-            println!("Current style logs");
-            r.print_logs();
-            println!("----");
-        })
+        .tap(|_| println!("Current style logs"))
+        .print_logs()
+        .tap(|_| println!("----"))
         .print_logs_structured(&world.aliases);
 
     // ----- Step 2: bob tries to swap, rejected with PoolLocked -----
@@ -97,19 +95,15 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             a_to_b: true,
         },
     );
-    let r = world
+    println!("\n4. Bob tries a swap, is denied");
+    world
         .ctx
         .svm
-        .send_instruction(bob_swap, &[&bob.signer])
-        .unwrap();
-    println!("\n4. Bob tries a swap, is denied");
-    r.tap(|r| {
-        println!("Current style logs");
-        r.print_logs();
-        println!("----");
-    })
-    .print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "Bob's swap must fail while pool is locked");
+        .send_err(bob_swap, &[&bob.signer], &world.aliases)
+        .tap(|_| println!("Current style logs"))
+        .print_logs()
+        .tap(|_| println!("----"))
+        .print_logs_structured(&world.aliases);
 
     // Capture state before the attack tx.
     let admin_x_before = world.ctx.svm.token_balance(&admin_ata_x).unwrap();
@@ -152,22 +146,17 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         amm::instruction::SetLocked { locked: true },
     );
 
-    let r = world
+    println!("\n5. Admin sandwiches a swap between an unlock and lock tx");
+    world
         .ctx
         .svm
         .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin])
-        .unwrap();
-    println!("\n5. Admin sandwiches a swap between an unlock and lock tx");
-    r.tap(|r| {
-        println!("Current style logs");
-        r.print_logs();
-        println!("----");
-    })
-    .print_logs_structured(&world.aliases);
-    assert!(
-        r.is_success(),
-        "the three-ix atomic tx is currently allowed; this is the bug"
-    );
+        .unwrap()
+        .tap(|_| println!("Current style logs"))
+        .print_logs()
+        .tap(|_| println!("----"))
+        .print_logs_structured(&world.aliases)
+        .assert_success();
 
     // ----- Step 4: the attack worked -----
     // Admin spent X, received Y at the locked-pool ratio.
@@ -207,26 +196,13 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             a_to_b: true,
         },
     );
-    let r = world
+    println!("\n6. Poor Bob is still locked out");
+    world
         .ctx
         .svm
-        .send_instruction(bob_swap_again, &[&bob.signer])
-        .unwrap();
-    println!("\n6. Poor Bob is still locked out");
-    r.tap(|r| {
-        println!("Current style logs");
-        r.print_logs();
-        println!("----");
-    })
-    .print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "Bob remains locked out after the authority's atomic trade"
-    );
-    // Sanity: the failure reason is PoolLocked (6008), not anything else.
-    assert!(
-        r.logs().iter().any(|l| l.contains("PoolLocked")),
-        "expected PoolLocked in error logs; got: {:?}",
-        r.logs()
-    );
+        .send_err_named(bob_swap_again, &[&bob.signer], &world.aliases, "PoolLocked")
+        .tap(|_| println!("Current style logs"))
+        .print_logs()
+        .tap(|_| println!("----"))
+        .print_logs_structured(&world.aliases);
 }

@@ -124,20 +124,11 @@ fn add_liquidity_rejects_when_lp_below_min() {
             min_lp_tokens: 1_001,
         },
     );
-    let r = world
+    world
         .ctx
         .svm
-        .send_instruction(ix, &[&alice.signer])
-        .unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "deposit must fail when min_lp_tokens > minted"
-    );
-    assert!(
-        r.logs().iter().any(|l| l.contains("SlippageExceeded")),
-        "expected SlippageExceeded in logs"
-    );
+        .send_err_named(ix, &[&alice.signer], &world.aliases, "SlippageExceeded")
+        .print_logs_structured(&world.aliases);
 
     // Alice's tokens unmoved; vaults still empty.
     assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(10_000));
@@ -163,15 +154,9 @@ fn add_liquidity_rejects_when_pool_locked() {
             min_lp_tokens: 0,
         },
     );
-    let r = world
+    world
         .ctx
         .svm
-        .send_instruction(ix, &[&alice.signer])
-        .unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "add_liquidity must fail on locked pool");
-    assert!(
-        r.logs().iter().any(|l| l.contains("PoolLocked")),
-        "expected PoolLocked in logs"
-    );
+        .send_err_named(ix, &[&alice.signer], &world.aliases, "PoolLocked")
+        .print_logs_structured(&world.aliases);
 }

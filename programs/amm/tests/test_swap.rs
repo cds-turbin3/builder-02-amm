@@ -153,16 +153,11 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
             a_to_b: true,
         },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&bob.signer]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "swap must fail when min_amount_out is unsatisfiable"
-    );
-    assert!(
-        r.logs().iter().any(|l| l.contains("SlippageExceeded")),
-        "expected SlippageExceeded in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(ix, &[&bob.signer], &world.aliases, "SlippageExceeded")
+        .print_logs_structured(&world.aliases);
 
     // Bob's tokens never moved.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), bob_x_before);
@@ -192,14 +187,9 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
             a_to_b: true,
         },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&bob.signer]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "exact-output swap must fail when input exceeds max"
-    );
-    assert!(
-        r.logs().iter().any(|l| l.contains("SlippageExceeded")),
-        "expected SlippageExceeded in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(ix, &[&bob.signer], &world.aliases, "SlippageExceeded")
+        .print_logs_structured(&world.aliases);
 }
