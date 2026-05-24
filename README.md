@@ -1,264 +1,174 @@
 # Constant-Product AMM
 
-A pool-based automated market maker (AMM) using the constant-product invariant `x · y = k`.
+A pool-based automated market maker using the constant-product invariant `x * y = k`, written in Anchor and tested against LiteSVM through the [`anchor-litesvm`](https://github.com/cds-rs/anchor-litesvm/tree/class/ask) test crate.
 
-Users swap tokens against a pool of two assets, and liquidity providers deposit both assets in equal value to mint LP tokens. When an LP burns tokens, they receive a pro-rata share of the pool's reserves. Fees collected on swaps accrue to LPs by growing the invariant over time.
+The program is a toy: small enough to read end-to-end in an afternoon, complete enough to exercise the parts of an AMM that matter (slippage-protected swaps, sqrt-bootstrapped initial liquidity, proportional burns, a fee that accrues into the reserve, an authority that can be renounced). But the interesting thing about this repo is not the AMM itself; it is the test harness.
 
-The pool is fair: traders get deterministic integer math, no operator custody, and slippage is the only cost (beyond fees). LPs bear the risk of impermanent loss in exchange for fee revenue.
+## What this project is really about
 
-## Table of Contents
+This is the test bed for an evaluation of three features in the `class/ask` fork of `anchor-litesvm`:
 
-- [Core Operations](#core-operations)
-- [Architecture Model](#architecture-model)
-- [Flow](#flow)
-- [Fee Model](#fee-model)
-- [Invariants](#invariants)
-- [Authority and Governance](#authority-and-governance)
-- [Testing](#testing)
-- [Code Structure](#code-structure)
-- [Reading the Spec](#reading-the-spec)
+1. **Macro conveniences** for building instructions (`#[derive(Bundle)]`, `#[derive(BundledPubkeys)]`)
+2. **Structured logging** for reading CPI traces (`print_logs_structured`, alias tables)
+3. **Timestamp / time-warp** primitives for testing time-gated behavior (`warp_to_timestamp`, `advance_clock_by_seconds`)
 
----
+Each feature gets a section below: what it gave us, where it paid its way in this repo, and what fell out. The framing is "test quality as communication across domain experts" (auditor, instructor, future maintainer): each feature is evaluated by whether a non-author can read the test output and infer what actually happened.
 
-# Core Operations
+If you want the program itself first, the pointers are:
 
-All math is integer-only, checked, and using u128 intermediates. Rounding always favors the pool.
-
-1. **Swap (exact-input)**: trader fixes input amount, receives computed output
-2. **Swap (exact-output)**: trader fixes output amount, pays computed input
-3. **Add Liquidity**: deposit both assets, mint LP tokens proportional to the pool's reserves
-4. **Remove Liquidity**: burn LP tokens, receive a pro-rata share of both reserves
-5. **Admin**: rotate fee, lock/unlock trades, or renounce authority
+- [`docs/design.md`](docs/design.md): architecture (math / control / asset planes), the instruction flow diagram, fee model, invariants, authority semantics, code map.
+- [`docs/toy-amm.spec.md`](docs/toy-amm.spec.md): the math specification (formulas, rounding policy, proofs).
+- [`docs/testing.md`](docs/testing.md): the bundle-as-actor pattern, every test in the suite, where each feature pays off.
+- [`docs/security/`](docs/security/): findings, mitigation responses, classroom exercises.
 
 ---
 
-# Architecture Model
+## 1. Macro conveniences: `Bundle` and `BundledPubkeys`
 
-## Math Layer (pure functions)
+Pre-bundle test code looked like every Anchor + LiteSVM test you have ever read: a `Vec<AccountMeta>` built by hand, a Borsh-encoded args blob, an 8-byte discriminator out front, and a prayer that slot 7 holds the right ATA. The two macros replace that with a typed actor:
 
-Pure integer arithmetic implementing the constant-product formula. No state, no side effects.
-
-See `crates/amm-math/`:
-- `swap_exact_input` / `swap_exact_output`: trade formulas
-- `add_liquidity` / `remove_liquidity`: LP operations  
-- Helper functions: `div_ceil`, `checked_mul_div_floor/ceil`, `integer_sqrt_floor`
-
-The math library is:
-- **deterministic**: same inputs always produce the same quote
-- **testable**: property tests verify invariant preservation and rounding correctness
-- **decoupled**: Anchor program calls it as a pure function, then enforces slippage and moves tokens
-
-## Control Plane
-
-Coordinates pool operations and manages state.
-
-Components:
-- **Pool state PDA**: stores reserves, LP supply, fees, authority, lock flag
-- **Anchor instructions**: `swap`, `add_liquidity`, `remove_liquidity`, admin operations
-- **PDA signer**: authorizes token transfers on behalf of the pool
-
-The pool PDA is the authority over the reserve accounts. When the program moves tokens, it signs with the PDA's signer seeds.
-
-## Asset Plane
-
-Holds actual token balances.
-
-Components:
-- **Reserve ATA for token A**: owned by the pool PDA
-- **Reserve ATA for token B**: owned by the pool PDA
-- **User token accounts**: where traders and LPs hold their tokens before/after swaps and deposits
-
-The reserve ATAs are simple token accounts whose authority is the pool PDA. Only the program, signing with PDA seeds, can transfer reserves.
-
----
-
-# Flow
-
-```mermaid
-sequenceDiagram
-    autonumber
-
-    actor Trader
-    participant Program as AMM Program<br/>(Control Plane)
-    participant Pool as Pool State PDA<br/>(Control Plane)
-    participant ReserveA as Reserve A ATA<br/>(Asset Plane)
-    participant ReserveB as Reserve B ATA<br/>(Asset Plane)
-    actor LP
-
-    Note over Trader: owns Token A
-    Note over LP: owns Token A and Token B
-
-    rect rgba(30, 64, 175, 0.18)
-
-    Note over Trader,ReserveB: swap_exact_input: invoked by Trader
-
-    Trader->>Program: invoke swap_exact_input(amount_in, min_out)
-    Program->>Pool: compute amount_out using math library<br/>verify invariant will hold
-    Program->>ReserveA: deposit amount_in<br/>(CPI signed by Trader)
-    Program->>ReserveB: withdraw amount_out<br/>(CPI signed by pool PDA)
-    Trader->>Program: receive amount_out
-
-    end
-
-    rect rgba(22, 101, 52, 0.20)
-
-    Note over LP,ReserveB: add_liquidity: invoked by LP
-
-    LP->>Program: invoke add_liquidity(amount_a, amount_b, min_lp_tokens)
-    Program->>Pool: compute lp_tokens minted using math library<br/>verify no dilution
-    Program->>ReserveA: deposit amount_a<br/>(CPI signed by LP)
-    Program->>ReserveB: deposit amount_b<br/>(CPI signed by LP)
-    Program->>Pool: mint lp_tokens to LP<br/>update reserves and supply
-    LP->>Program: receive lp_tokens
-
-    end
-
-    rect rgba(202, 138, 4, 0.20)
-
-    Note over LP,ReserveB: remove_liquidity: invoked by LP
-
-    LP->>Program: invoke remove_liquidity(lp_tokens, min_a, min_b)
-    Program->>Pool: compute amount_a, amount_b using math library<br/>burn lp_tokens
-    Program->>ReserveA: withdraw amount_a<br/>(CPI signed by pool PDA)
-    Program->>ReserveB: withdraw amount_b<br/>(CPI signed by pool PDA)
-    LP->>Program: receive amount_a, amount_b
-
-    end
+```rust
+#[derive(anchor_litesvm::Bundle, Copy, Clone)]
+pub struct SwapBundle {
+    pub user: Pubkey,
+    pub mint_x: Pubkey, pub mint_y: Pubkey,
+    pub config: Pubkey,
+    pub vault_x: Pubkey, pub vault_y: Pubkey,
+    pub user_x: Pubkey, pub user_y: Pubkey,
+}
 ```
 
+`Bundle` emits the glue for `program.build_ix(bundle, args)` (it concatenates discriminator + Borsh args and builds the `Instruction`). `BundledPubkeys`, applied to the program's `Accounts` struct behind the `test-helpers` feature, auto-derives a `From<SwapBundle> for accounts::Swap` impl that maps by field name; well-known Anchor program fields (`token_program`, `system_program`, `associated_token_program`) auto-fill with their canonical IDs.
+
+What this earned us in the tests:
+
+- **Refactor safety.** Adding `lp_vault` to `Initialize<'info>` forced every `InitializeBundle` construction site to supply the new field. The compiler errors landed exactly where the work was. (This actually happened mid-project when we added the MINIMUM_LIQUIDITY lock vault: one field added to `Initialize`, one to the bundle, one helper updated in `common/mod.rs`. Every individual test compiled unchanged.)
+- **Narrative tests.** A test reads `world.ctx.program().build_ix(SwapBundle { user: bob.pubkey(), ... }, instruction::Swap { ... })`. No positional account list. The IDE auto-completes the bundle's fields; the compiler refuses to build if a field is missing or mistyped.
+- **Negative tests via override.** `build_ix_with(bundle, args, |a| { a.config = wrong_pda })` keeps the positive shape implicit and overrides exactly the field whose constraint is under test. The Anchor failure that follows is *about that field*, not about whatever account happened to land in slot 3.
+
+Honest caveat: the bundle's field set has to match the `Accounts` struct's field names. This is normally what you want (renaming an account on-chain forces a corresponding rename in tests), but it does mean the bundle is not a fully independent test API; it shares vocabulary with the program. We decided that was a feature, not a bug: the bundle struct *is* the instruction's threat model made explicit, and forcing it to track the on-chain struct keeps it honest. See [`testing.md`](docs/testing.md) for the longer argument.
+
 ---
 
-# Fee Model
+## 2. Structured logging: `print_logs_structured` and aliases
 
-Fees are applied to swaps and expressed in basis points (0–9999).
+LiteSVM gives you Solana's program-log stream verbatim: a flat list of `Program log:` lines per CPI frame, plus raw program-id base58. Useful for a single small failure, hostile for anything with three levels of CPI.
 
-The fee is deducted from the trader's input:
+`print_logs_structured(&world.aliases)` parses that stream into a tree, decodes Anchor's `Program log: Instruction: <Name>` convention to name each frame, substitutes well-known program IDs (`Token`, `System`, `AssociatedToken`) for their addresses, and resolves the test's own aliases (signer pubkeys, PDAs, ATAs) into the names the test wrote (`Alice`, `Bob`, `vault_x`).
+
+The output that comes back is the artifact that makes the lock/unlock vulnerability obvious:
 
 ```
-amount_in_after_fee = floor(amount_in * (10_000 - fee_bps) / 10_000)
-fee_amount = amount_in - amount_in_after_fee
+=== Structured Transaction Logs ===
+Instruction: amm::SetLocked, amm::Swap, amm::SetLocked   (3 sibling top-level frames)
+Transaction  signers=[admin]
+├── amm::SetLocked [1] ✓ 4079cu                signer=admin
+├── amm::Swap [1] ✓ 21503cu                    signer=admin
+│   ├── Token::TransferChecked [2] ✓           (admin -> vault_x)
+│   └── Token::TransferChecked [2] ✓           (vault_y -> admin)
+└── amm::SetLocked [1] ✓ 4051cu                signer=admin
+Compute Units: 29633
+Fee: 5000 lamports
 ```
 
-Fee tokens **remain in the pool's reserve** and accrue to LPs by growing the invariant `k` over time. This is the Uniswap V2 model: no separate fee collector, just the reserve itself growing. LPs realize accumulated fees when they burn LP tokens and receive their pro-rata share of the larger reserves.
+Three sibling top-level frames inside one transaction, before honest Bob ever attempts his swap. The asymmetry is total: honest Bob (or any other non-admin trader) cannot land a swap while the pool is locked, because non-admins cannot alter `Config.locked`; only the authority can. And because the authority's transaction is atomic by Solana semantics, there is no slot *between* frame [1] (`SetLocked` unlock) and frame [3] (`SetLocked` relock) where a competing non-admin transaction could possibly land. The net effect: the admin trades inside a window that, from every other user's perspective, never opened. The structured output is what makes that legible; the raw program-log stream gives you the same facts in an unreadable shape.
+
+What this earned us:
+
+- **The vulnerability.** [Issue 001](docs/security/issues/001-lock-unlock-timing-attack.md) was discovered by *reading* the structured log of a test that was passing. The shape of the tree was the smoking gun. The [classroom exercise](docs/security/exercises/001-what-is-going-on.md) is built directly on that captured output.
+- **Test-as-narrative.** Aliases turn `6PqHNGix…xUVG` into `admin`. The CPI tree's labels are the test's vocabulary, not Solana's vocabulary; a reader who does not already know what `vault_x` is can still see that the program moved value from one named place to another.
+- **Cheap diff for behavior changes.** When a refactor changes the CPI tree's shape, the structured-log diff shows exactly which CPIs moved, were added, or were dropped. CU magnitudes drift run-to-run (Anchor's `find_program_address` for randomly-keyed ATAs consumes a variable amount of CU per call; see the [exercise's footnote](docs/security/exercises/001-what-is-going-on.md)), but the *shape* is stable.
+
+Caveat (and why it's actually a feature): aliasing requires the test to register names with the world's `Aliases` table. Every helper that creates a keypair (`world.make_user`, `world.fresh_pool`) does the registration; if a test goes off-pattern and constructs a `Keypair::new()` directly without aliasing it, the log degrades back to base58. The fix has always been "register it through the helper."
+
+We treat that overhead as a feature, not a tax. The whole point of the alias table is to elevate the actors in a scenario (Alice, Bob, Admin, the pool, the vaults) into first-class citizens of the trace. A test you can read as "Alice deposits, Bob swaps, Admin locks" is a test that an auditor or future maintainer can argue *about*; a test that reads as "`6PqHNGix…xUVG` signs `8r9fJP9H…bjUA` over to `CYbYnHW7…2yf5`" is one they can only argue *with*. That is exactly the "tests as communication across domain experts" framing the project is built around: the aliases are how the test's vocabulary survives the trip from author to reader.
 
 ---
 
-# Invariants
+## 3. Timestamp / time-warp: `warp_to_timestamp`, `advance_clock_by_seconds`
 
-The program **must** enforce:
+The AMM as currently written has no time-gated behavior; the lifecycle and edge-case tests do not touch the Clock sysvar. The time-warp primitives are *for* the planned mitigation of [issue 001](docs/security/issues/001-lock-unlock-timing-attack.md).
 
-1. **Positivity**: all input/output amounts and LP tokens are non-zero
-2. **Constant-product**: after any swap, `new_k >= old_k` (where `k = reserve_a * reserve_b`)
-3. **Pre-fee invariant**: the fee is extra; the constant product holds even without counting the fee tokens, protecting against bugs that leak value to traders
-4. **No dilution**: new deposits cannot reduce the LP-token-to-reserve ratio for existing LPs
-5. **Reserve identities**: `new_reserve = reserve + deposit` (exact), not approximate; using wrong formula silently changes price curve
+The [response](docs/security/responses/001-lock-unlock-timing-attack.md) commits to a **timelock on unlock**: `set_locked(false)` no longer flips `Config.locked` immediately; it records `pending_unlock_at = Clock::unix_timestamp + 24h`, and the trade-path handlers lazy-apply the transition once `Clock::unix_timestamp >= pending_unlock_at`. The atomic three-instruction attack tx (`unlock; swap; relock`) then fails: the trailing swap runs against `locked == true && now < pending_unlock_at` and returns `PoolLocked`. The whole tx rolls back atomically.
 
-See `docs/toy-amm.spec.md` for the full specification and mathematical proofs.
+That mitigation is untestable without a way to advance the clock inside the test. `litesvm-utils` provides three calls that cover what we need:
 
----
-
-# Authority and Governance
-
-A pool has an optional authority stored in its state:
-
-- `Some(pubkey)`: that pubkey may call admin instructions (`update_fee`, `set_locked`, `update_authority`)
-- `None`: the pool is immutable; no further admin operations are permitted
-
-This allows pool creators to renounce their privilege, which is a stronger trust guarantee than "we promise not to use it". Once renounced, the fee and lock state are permanent.
-
----
-
-# Testing
-
-We built a comprehensive test suite using LiteSVM and structured logging (via `anchor-litesvm`) to make bugs visible.
-
-## What we tested
-
-**Math library** (pure functions in `crates/amm-math`):
-- Unit tests: specific formulas, edge cases, zero/overflow handling
-- Property tests: 1000+ random inputs per property, verifying:
-  - `new_k >= old_k` (invariant preservation)
-  - Pre-fee invariant (fee doesn't leak value to traders)
-  - Rounding correctness (no dilution, no underpayment)
-  - Boundary behavior at u64::MAX
-
-**Anchor program** (pool state and instructions):
-- Integration tests: full workflows (initialize, deposit, swap, withdraw)
-- Admin tests: fee rotation, authority renounce, access control
-- Inflation attack tests: MINIMUM_LIQUIDITY protection
-- Edge cases: single token, rounding to zero, liquidity drain
-
-Run all tests: `just tt` (with structured logs on failure)
-
-## What we discovered: Lock/Unlock Timing Attack
-
-The structured logging in the test harness exposed a security vulnerability: **the pool authority can atomically unlock, execute a trade, and relock in a single transaction, gaining asymmetric trading access while ordinary users are blocked.**
-
-Users might interpret `locked == true` as "my position is safe from execution risk until unlocked". That assumption is wrong. One transaction can open a window, capture value, and close it, all atomically.
-
-### Run the security PoC (structured logs included)
-
-To see the vulnerability in action:
-
-```bash
-just poc
+```rust
+svm.get_unix_timestamp();                  // i64, reads Clock sysvar
+svm.warp_to_timestamp(target_unix_ts);     // jump to an absolute timestamp
+svm.advance_clock_by_seconds(86_400);      // relative advance, built on warp_to_timestamp
 ```
 
-This executes `test_lock_unlock_attack`, which demonstrates:
+The mitigation's test plan calls for at least these scenarios:
 
-1. Authority locks the pool (ordinary users are now blocked from trading)
-2. Bob (honest trader) attempts a swap: transaction fails with `PoolLocked` error
-3. Authority atomically unlocks, swaps at a favorable price, and relocks (all in one transaction)
-4. Bob's next swap attempt still fails because the lock is back up
+- `set_locked(false)` records `pending_unlock_at` but leaves `locked == true`; an immediate trade fails.
+- After `advance_clock_by_seconds(UNLOCK_DELAY - 1)`, the trade still fails.
+- After advancing by one more second, the next trade-path instruction succeeds *and* observes `Config.locked == false` post-tx (the lazy transition was applied).
+- A `set_locked(true)` between schedule and expiry clears `pending_unlock_at` (the scheduled unlock is canceled).
 
-> **⚠️ See the full structured logs and walkthrough:** [`docs/security/exercises/001-what-is-going-on.md`](docs/security/exercises/001-what-is-going-on.md)
+Why this matters as a *feature evaluation*: time-warp turns what would otherwise be a TODO comment into a verifiable claim. Without it, "the timelock takes effect after 24 hours" is documentation; with it, it is an assertion the test suite enforces, checkable at T-1, T, and T+1 around the boundary. The delay becomes a design parameter the tests pin down, not a constant we hand-wave around.
 
-The test **currently passes**, demonstrating the bug. The structured logs show the instruction tree, making it obvious that the authority bundled an unlock, their own swap, and a relock into one atomic transaction while ordinary users saw only `PoolLocked` errors.
-
-The mitigation is a timelock: `set_locked(false)` will schedule a future unlock (not flip immediately), so the trailing swap cannot execute while locked.
-
-See `docs/security/issues/001-lock-unlock-timing-attack.md` for the full vulnerability writeup.
+Status: the timelock mitigation is planned, not landed. The current `test_lock_unlock_attack` still passes (it demonstrates the unmitigated attack); the mitigated test and the boundary tests above will land alongside the `Config` field, the `set_locked` rewrite, and the trade-path lazy-apply changes. See the response doc for the full implementation plan.
 
 ---
 
-# Code Structure
+## How does it hold up?
 
-```
-crates/amm-math/
-├── src/
-│   ├── error.rs         : AmmMathError variants
-│   ├── swap.rs          : exact-input and exact-output swaps
-│   ├── liquidity.rs     : initial / add / remove liquidity
-│   ├── math.rs          : checked division, sqrt, mul_div helpers
-│   └── types.rs         : SwapQuote, ExactOutputQuote, LiquidityQuote
+Good tests have four properties: they're **fast**, **deterministic**, **low-cost**, and **enabling**. Here's an honest read on anchor-litesvm against each, grounded in this repo.
 
-programs/amm/
-├── src/
-│   ├── lib.rs           : entry point
-│   ├── state.rs         : Config (pool state PDA), AccountKey for reserve ATAs
-│   ├── error.rs         : AmmError variants
-│   ├── instructions/    : swap, add_liquidity, remove_liquidity, admin ops
-│   └── constants.rs     : seeds, rent-exempt minimums
+**Fast.** Solidly good. LiteSVM is in-process: no validator boot, no RPC round trips. The full suite (14 integration + 71 amm-math = 85 tests) runs in a few seconds once `cargo build-sbf` has produced the program binary. Bundle macros are compile-time only; the structured-log parser runs in microseconds per transaction. The slow link is `cargo build-sbf` itself, which is the Solana toolchain's problem, not anchor-litesvm's.
 
-tests/
-├── test_swap.rs         : exact-input/output swaps, invariants
-├── test_add_liquidity.rs: deposits, dilution, multiple LPs
-├── test_remove_liquidity.rs: withdrawals, rounding
-├── test_admin.rs        : fee updates, authority renounce
-├── test_inflation_attack.rs: MINIMUM_LIQUIDITY protection
-├── test_lock_unlock_attack.rs: security PoC (run with `just poc`)
-└── ...                  : edge cases, integration tests
-```
+**Deterministic.** Solidly good, where "deterministic" bundles three things together: the tests are not random; the observations they produce are meaningful and repeatable; *and* those observations predict how the code will behave in production. The first two are about reproducibility; the third is about predictive validity (a test that ran consistently green but didn't model production fairly would be deterministic-by-luck, not the property we want).
+
+The things the tests actually assert on (token balances, `Config` field values, success or failure of an instruction, error codes like `PoolLocked` or `SlippageExceeded`, the *shape* of the CPI tree) are reproducible across runs *and* they correspond, one-to-one, to the same things that would change on mainnet. There is no randomness in LiteSVM's execution, no network flakes, no timing-sensitive constructs in the harness. The amm-math property tests use `proptest`, which is random by design, but it shrinks to a deterministic counter-example on failure and the same seed reproduces the same failure; the behavioral observation is still repeatable. The time-warp primitives are load-bearing on this axis specifically: without a controllable Clock, time-gated code is *not* deterministic in the meaningful sense (you can't make "the timelock fires after 24h" a repeatable test observation), and `warp_to_timestamp` is what brings that class of code under the determinism umbrella.
+
+One honest caveat on the predictive-validity half: LiteSVM is a faithful in-process Solana VM (same instruction semantics, real SPL programs, real Anchor account validation), but it does not model multi-validator effects, the live fee market, transaction ordering under congestion, or program-loader nuances. The prediction is high-fidelity for everything *inside* a single transaction and silent on what happens *between* transactions. For this AMM, that is a fair trade: nothing in the AMM's correctness depends on inter-transaction physics. For a program whose correctness *does* depend on the leader schedule or validator-to-validator timing, the determinism story would need a different harness layered on top.
+
+**Low-cost.** This is where the macros pay rent (in leverage, not Lamports ya know). Bundle-as-actor collapses the per-instruction plumbing (account-list construction, Borsh encoding, discriminator) into a struct the IDE auto-completes and the compiler verifies. Adding a test for an existing instruction is "build a bundle, build an instruction, `send_ok`, assert"; adding one for a new instruction is one `Bundle` struct plus those same four lines. The fixture layer (`Pool`, `UserAccounts`, `Bootstrap`) is the one place real cost lives, and it amortizes across every test that touches the pool. Bootstrap cost (learning the world / alias pattern, registering names) is real but one-time per author.
+
+**Enabling.** Three concrete data points from this repo:
+
+- *Exhibit A: the lock/unlock discovery.* The structured-log shape *exposed* the vulnerability in a test that was already passing. Without `print_logs_structured`, you have a flat program-log dump and a green tick; with it, the three sibling top-level frames are right there on screen, and the bug reads off the tree.
+- *Exhibit B: the `lp_vault` refactor.* Adding the vault to `Initialize<'info>` forced every test that built an `InitializeBundle` to update at the field level. The compiler errors were the punch list. Without the macro, the same change would have rippled into hand-built `Vec<AccountMeta>` constructors and been caught (or not) at runtime.
+- *Exhibit C: the in-flight timelock mitigation.* Only testable because `warp_to_timestamp` exists; without it, "the timelock takes effect after 24 hours" stays documentation rather than becoming an assertion.
+
+Where it doesn't help (yet):
+
+- **No first-class transaction fuzzing.** The amm-math `proptest`s cover the pure side; generating *transactions* (random bundles, random args) isn't a built-in. We haven't needed it; if we did, we'd build it ourselves.
+- **No cross-program ergonomics.** The bundle pattern is per-program; testing the AMM interacting with another program would mean composing bundles by hand. Out of scope here, but a real ceiling for multi-program suites.
+- **Bundle field names couple to the on-chain `Accounts` struct.** Renaming an account ripples to every test. Usually you *want* that (the rename is the point), but it is a coupling, not a free lunch.
+
+Net read across the four axes: this is a meaningful improvement over a hand-rolled LiteSVM harness on every axis. The biggest single win is *enabling*: the structured-log section above is the clearest "we wrote better software because of this tooling" data point in the repo.
 
 ---
 
-# Reading the Spec
+## Math, invariants, and testing in one paragraph each
 
-The specification in `docs/toy-amm.spec.md` is the source of truth for the math.
+**Math.** Integer-only, `u128` intermediates, rounding always favors the pool. The pure-function library lives in `crates/amm-math/`; the Anchor program calls it, then enforces slippage and moves tokens. Full formulas and rounding rules in [`toy-amm.spec.md`](docs/toy-amm.spec.md).
 
-Start with:
-- **Math Reference** (formulas)
-- **Rounding Policy** (which direction, why)
-- **Invariants** (what to verify)
+**Invariants.** Five program-level invariants (positivity; constant-product `new_k >= old_k`; pre-fee invariant; no-dilution on deposits; exact reserve identities). Property tests in `crates/amm-math/tests/` verify them over thousands of random inputs; the integration tests in `programs/amm/tests/` verify them across realistic instruction sequences. Full list in [`docs/design.md`](docs/design.md#invariants) with proofs in the spec.
 
-Then dive into specific sections as needed (Implementation Constraints for error handling, Property Tests for testing strategy, Impermanent Loss for client-side display).
+**Testing.** 14 integration tests (one file per scenario family) + 71 amm-math unit and property tests = 85 tests in the workspace. Architecture is the bundle-as-actor pattern documented in [`docs/testing.md`](docs/testing.md). Every test ends with `print_logs_structured(&world.aliases)` so a failing test's tree is the first thing you see.
+
+---
+
+## Running
+
+```sh
+just t      # all tests
+just tt     # all tests, structured logs on stdout
+just poc    # the lock/unlock PoC, full structured-log output
+just doc    # rustdoc for amm and amm-math, no external deps
+```
+
+The pre-commit hook runs `cargo clippy --all-targets --features amm/test-helpers -- -D warnings`, so test code is held to the same lint standard as program code.
+
+---
+
+## See also
+
+- [`docs/design.md`](docs/design.md): architecture, flow, fee model, code map.
+- [`docs/toy-amm.spec.md`](docs/toy-amm.spec.md): math spec.
+- [`docs/testing.md`](docs/testing.md): bundle-as-actor pattern + scenario catalog.
+- [`docs/security/`](docs/security/): findings, responses, exercises.
+- [`anchor-litesvm` `class/ask` fork](https://github.com/cds-rs/anchor-litesvm/tree/class/ask): upstream for the macro, log, and time-warp work.
