@@ -27,7 +27,7 @@
 mod common;
 
 use amm::{SetLockedBundle, SwapBundle, SwapKind};
-use anchor_litesvm::{Aliases, Signer, TestHelpers, TransactionHelpers};
+use anchor_litesvm::{Signer, TestHelpers, TransactionHelpers};
 use common::setup;
 
 #[test]
@@ -39,7 +39,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     // Alice provides liquidity. The reserves she puts in are the pool's
     // working state; she's the user whose position is supposed to be
     // protected by the "locked" signal.
-    let alice = world.make_user(10_000_000_000, 1_000_000, 1_000_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
     println!("\n2. Initialize with tokens");
     world.deposit(&pool, &alice, 1_000_000, 1_000_000, 1);
 
@@ -64,13 +64,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
 
     // Bob is an honest trader, here to play the role of "user the lock is
     // supposed to protect."
-    let bob = world.make_user(10_000_000_000, 100_000, 0);
-
-    let aliases = Aliases::default()
-        .with(amm::ID, "amm")
-        .with(admin.pubkey(), "admin")
-        .with(alice.pubkey(), "alice")
-        .with(bob.pubkey(), "bob");
+    let bob = world.make_user("Bob", 10_000_000_000, 100_000, 0);
 
     // ----- Step 1: authority locks the pool -----
     let lock_ix = world.ctx.program().build_ix(
@@ -84,8 +78,13 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     world
         .ctx
         .svm
-        .send_ok(lock_ix, &[&admin])
-        .print_logs_structured(&aliases);
+        .send_ok(lock_ix, &[&admin], &world.aliases)
+        .tap(|r| {
+            println!("Current style logs");
+            r.print_logs();
+            println!("----");
+        })
+        .print_logs_structured(&world.aliases);
 
     // ----- Step 2: bob tries to swap, rejected with PoolLocked -----
     let bob_swap = world.ctx.program().build_ix(
@@ -104,7 +103,12 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .send_instruction(bob_swap, &[&bob.signer])
         .unwrap();
     println!("\n4. Bob tries a swap, is denied");
-    r.print_logs_structured(&aliases);
+    r.tap(|r| {
+        println!("Current style logs");
+        r.print_logs();
+        println!("----");
+    })
+    .print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "Bob's swap must fail while pool is locked");
 
     // Capture state before the attack tx.
@@ -154,7 +158,12 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin])
         .unwrap();
     println!("\n5. Admin sandwiches a swap between an unlock and lock tx");
-    r.print_logs_structured(&aliases);
+    r.tap(|r| {
+        println!("Current style logs");
+        r.print_logs();
+        println!("----");
+    })
+    .print_logs_structured(&world.aliases);
     assert!(
         r.is_success(),
         "the three-ix atomic tx is currently allowed; this is the bug"
@@ -189,16 +198,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     // (same data + same blockhash = same signature, deduped). We want to
     // actually hit the handler and confirm the PoolLocked failure path.
     let bob_swap_again = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 5_000,
@@ -213,7 +213,12 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .send_instruction(bob_swap_again, &[&bob.signer])
         .unwrap();
     println!("\n6. Poor Bob is still locked out");
-    r.print_logs_structured(&aliases);
+    r.tap(|r| {
+        println!("Current style logs");
+        r.print_logs();
+        println!("----");
+    })
+    .print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "Bob remains locked out after the authority's atomic trade"

@@ -131,6 +131,9 @@ pub fn setup() -> Bootstrap {
         mint_authority,
         mint_x: mint_x_kp.pubkey(),
         mint_y: mint_y_kp.pubkey(),
+        // Pre-seed `amm::ID` so structured logs render program frames as
+        // `amm::Swap` instead of `CYbYnHW7…2yf5::Swap`.
+        aliases: Aliases::default().with(amm::ID, "amm"),
     }
 }
 
@@ -139,11 +142,32 @@ pub struct Bootstrap {
     pub mint_authority: Keypair,
     pub mint_x: Pubkey,
     pub mint_y: Pubkey,
+    /// Accumulates over the test as actors and pool components are created,
+    /// so structured-log output renders pubkeys as the names the test author
+    /// reasoned about (Bob, Pool, VaultX...) instead of raw base58.
+    pub aliases: Aliases,
 }
 
 impl Bootstrap {
-    /// Create a funded user with x/y ATAs and pre-mint them token balances.
-    pub fn make_user(&mut self, sol: u64, x_balance: u64, y_balance: u64) -> UserAccounts {
+    /// Register `pubkey -> name` in the alias table. Later inserts shadow
+    /// earlier ones, so this also serves as a rename when an actor's role
+    /// changes mid-test (e.g. authority rotation).
+    pub fn alias(&mut self, pubkey: Pubkey, name: impl Into<String>) {
+        // `Aliases::with` is a consuming builder; mem::take lets us update
+        // the field in place without requiring a clone.
+        let aliases = std::mem::take(&mut self.aliases);
+        self.aliases = aliases.with(pubkey, name);
+    }
+
+    /// Create a funded user with x/y ATAs and pre-mint them token balances,
+    /// registering the signer pubkey under `name` for log readability.
+    pub fn make_user(
+        &mut self,
+        name: &str,
+        sol: u64,
+        x_balance: u64,
+        y_balance: u64,
+    ) -> UserAccounts {
         let signer = self.ctx.svm.create_funded_account(sol).unwrap();
         let ata_x = self
             .ctx
@@ -167,6 +191,7 @@ impl Bootstrap {
                 .mint_to(&self.mint_y, &ata_y, &self.mint_authority, y_balance)
                 .unwrap();
         }
+        self.alias(signer.pubkey(), name);
         UserAccounts {
             signer,
             ata_x,
@@ -176,10 +201,21 @@ impl Bootstrap {
 
     /// One-shot helper: derive a pool at `seed=0` and run `initialize` with
     /// `admin` as both initializer and authority. Returns the admin keypair
-    /// (signer for future admin instructions) and the pool fixture.
+    /// (signer for future admin instructions) and the pool fixture. The
+    /// admin signer is aliased as "Admin" and the pool's PDAs / vaults are
+    /// registered too; tests that need a different admin name override via
+    /// `world.alias(admin.pubkey(), "...")`.
     pub fn fresh_pool(&mut self, fee_bps: u16) -> (Keypair, Pool) {
         let admin = self.ctx.svm.create_funded_account(10_000_000_000).unwrap();
         let pool = Pool::derive(0, self.mint_x, self.mint_y);
+        self.alias(admin.pubkey(), "Admin");
+        self.alias(pool.config, "Pool");
+        self.alias(pool.mint_lp, "MintLP");
+        self.alias(pool.vault_x, "VaultX");
+        self.alias(pool.vault_y, "VaultY");
+        self.alias(pool.lp_vault, "LpVault");
+        self.alias(self.mint_x, "MintX");
+        self.alias(self.mint_y, "MintY");
         let ix = self.ctx.program().build_ix(
             InitializeBundle {
                 initializer: admin.pubkey(),
@@ -199,8 +235,8 @@ impl Bootstrap {
         );
         self.ctx
             .svm
-            .send_ok(ix, &[&admin])
-            .print_logs_structured(&Aliases::default());
+            .send_ok(ix, &[&admin], &self.aliases)
+            .print_logs_structured(&self.aliases);
         (admin, pool)
     }
 
@@ -216,8 +252,8 @@ impl Bootstrap {
         );
         self.ctx
             .svm
-            .send_ok(ix, &[admin])
-            .print_logs_structured(&Aliases::default());
+            .send_ok(ix, &[admin], &self.aliases)
+            .print_logs_structured(&self.aliases);
     }
 
     /// Run `add_liquidity` on behalf of `user`. Used when a test needs an
@@ -252,7 +288,7 @@ impl Bootstrap {
         );
         self.ctx
             .svm
-            .send_ok(ix, &[&user.signer])
-            .print_logs_structured(&Aliases::default());
+            .send_ok(ix, &[&user.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
     }
 }

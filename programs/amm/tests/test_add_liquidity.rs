@@ -6,15 +6,14 @@
 
 mod common;
 
-use amm::AddLiquidityBundle;
-use anchor_litesvm::{Aliases, TestHelpers, TransactionHelpers};
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::setup;
 
 #[test]
 fn first_deposit_mints_to_user_and_locks_minimum_liquidity() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
 
     // (a, b) = (1_000, 4_000) -> sqrt(4_000_000) = 2_000 total LP minted.
     // User receives 2_000 - MINIMUM_LIQUIDITY = 1_000; lp_vault gets 1_000.
@@ -29,8 +28,8 @@ fn first_deposit_mints_to_user_and_locks_minimum_liquidity() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&alice.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&alice.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Alice received 1_000 LP, lp_vault holds the locked 1_000.
     assert_eq!(
@@ -60,14 +59,14 @@ fn subsequent_deposit_uses_floor_min_formula() {
 
     // Alice opens the pool with (1_000, 4_000). After this, supply = 2_000
     // (1_000 user + 1_000 lp_vault); vaults = (1_000, 4_000).
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
 
     // Bob deposits (500, 2_000), which is ratio-correct (1:4).
     // lp_from_a = floor(500 * 2000 / 1000) = 1_000
     // lp_from_b = floor(2000 * 2000 / 4000) = 1_000
     // min = 1_000 -> bob gets 1_000 LP.
-    let bob = world.make_user(10_000_000_000, 5_000, 20_000);
+    let bob = world.make_user("Bob", 10_000_000_000, 5_000, 20_000);
     let ix = world.ctx.program().build_ix(
         pool.add_liquidity_bundle(&bob),
         amm::instruction::AddLiquidity {
@@ -79,8 +78,8 @@ fn subsequent_deposit_uses_floor_min_formula() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&bob.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&bob.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Bob received 1_000 LP. Alice's LP is unchanged (no dilution).
     assert_eq!(
@@ -116,7 +115,7 @@ fn add_liquidity_rejects_when_lp_below_min() {
     // For (1_000, 4_000), the initial-liquidity math mints
     // sqrt(4_000_000) - MINIMUM_LIQUIDITY = 1_000 to the user. Asking for
     // 1_001 must reject.
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     let ix = world.ctx.program().build_ix(
         pool.add_liquidity_bundle(&alice),
         amm::instruction::AddLiquidity {
@@ -130,7 +129,7 @@ fn add_liquidity_rejects_when_lp_below_min() {
         .svm
         .send_instruction(ix, &[&alice.signer])
         .unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "deposit must fail when min_lp_tokens > minted"
@@ -153,7 +152,7 @@ fn add_liquidity_rejects_when_pool_locked() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
 
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.set_locked(&admin, &pool, true);
 
     let ix = world.ctx.program().build_ix(
@@ -169,7 +168,7 @@ fn add_liquidity_rejects_when_pool_locked() {
         .svm
         .send_instruction(ix, &[&alice.signer])
         .unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "add_liquidity must fail on locked pool");
     assert!(
         r.logs().iter().any(|l| l.contains("PoolLocked")),

@@ -5,8 +5,8 @@
 
 mod common;
 
-use amm::{Config, SetLockedBundle, SwapBundle, SwapKind, UpdateAuthorityBundle, UpdateFeeBundle};
-use anchor_litesvm::{Aliases, Signer, TestHelpers, TransactionHelpers};
+use amm::{Config, SetLockedBundle, SwapKind, UpdateAuthorityBundle, UpdateFeeBundle};
+use anchor_litesvm::{Signer, TestHelpers, TransactionHelpers};
 use common::setup;
 
 #[test]
@@ -24,8 +24,8 @@ fn update_fee_changes_fee_bps() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config.fee_bps, 100);
@@ -46,8 +46,8 @@ fn set_locked_flips_locked_field() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert!(config.locked, "locked should be true");
@@ -71,8 +71,8 @@ fn update_authority_renounce_then_admin_calls_fail() {
     world
         .ctx
         .svm
-        .send_ok(renounce, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(renounce, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config.authority, None);
@@ -87,7 +87,7 @@ fn update_authority_renounce_then_admin_calls_fail() {
         amm::instruction::UpdateFee { new_fee_bps: 50 },
     );
     let r = world.ctx.svm.send_instruction(after, &[&admin]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "admin instruction should fail after renounce"
@@ -101,6 +101,7 @@ fn unauthorized_signer_cannot_update_fee() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
     let attacker = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    world.alias(attacker.pubkey(), "Attacker");
 
     // Bundle declares attacker as the authority signer; handler will compare
     // attacker.pubkey() to Config.authority (which is admin) and reject with
@@ -113,7 +114,7 @@ fn unauthorized_signer_cannot_update_fee() {
         amm::instruction::UpdateFee { new_fee_bps: 1 },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&attacker]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "non-authority caller should not be able to update fee"
@@ -130,6 +131,7 @@ fn unauthorized_signer_cannot_set_locked() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
     let attacker = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    world.alias(attacker.pubkey(), "Attacker");
 
     let ix = world.ctx.program().build_ix(
         SetLockedBundle {
@@ -139,7 +141,7 @@ fn unauthorized_signer_cannot_set_locked() {
         amm::instruction::SetLocked { locked: true },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&attacker]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "attacker should not be able to lock the pool"
@@ -167,8 +169,8 @@ fn set_locked_after_renounce_fails() {
     world
         .ctx
         .svm
-        .send_ok(renounce, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(renounce, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let lock_ix = world.ctx.program().build_ix(
         SetLockedBundle {
@@ -178,7 +180,7 @@ fn set_locked_after_renounce_fails() {
         amm::instruction::SetLocked { locked: true },
     );
     let r = world.ctx.svm.send_instruction(lock_ix, &[&admin]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "set_locked must fail after renounce");
     assert!(
         r.logs().iter().any(|l| l.contains("AuthorityRenounced")),
@@ -193,6 +195,7 @@ fn unauthorized_signer_cannot_update_authority() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
     let attacker = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    world.alias(attacker.pubkey(), "Attacker");
 
     let ix = world.ctx.program().build_ix(
         UpdateAuthorityBundle {
@@ -204,7 +207,7 @@ fn unauthorized_signer_cannot_update_authority() {
         },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&attacker]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "attacker should not be able to take authority"
@@ -237,8 +240,8 @@ fn update_authority_after_renounce_fails() {
     world
         .ctx
         .svm
-        .send_ok(renounce, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(renounce, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Now try to un-renounce by setting authority back. Must fail.
     let restore = world.ctx.program().build_ix(
@@ -251,7 +254,7 @@ fn update_authority_after_renounce_fails() {
         },
     );
     let r = world.ctx.svm.send_instruction(restore, &[&admin]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "renounce is irreversible");
     assert!(
         r.logs().iter().any(|l| l.contains("AuthorityRenounced")),
@@ -267,7 +270,7 @@ fn update_authority_after_renounce_fails() {
 fn update_fee_propagates_to_next_swap() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1);
 
     // Bump fee to 1000 bps (10%); subsequent swap must use it.
@@ -281,15 +284,15 @@ fn update_fee_propagates_to_next_swap() {
     world
         .ctx
         .svm
-        .send_ok(update, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(update, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Bob swaps 100 X. With fee_bps = 1_000:
     //   amount_in_after_fee = floor(100 * 9_000 / 10_000) = 90
     //   amount_out = floor(90 * 4_000 / (1_000 + 90)) = floor(360_000 / 1_090) = 330
     // Note: with the original 30 bps fee, amount_out would have been 360
     // (per test_swap.rs). 330 != 360 proves the fee actually changed.
-    let bob = world.make_user(10_000_000_000, 1_000, 0);
+    let bob = world.make_user("Bob", 10_000_000_000, 1_000, 0);
     let swap = world.ctx.program().build_ix(
         pool.swap_bundle(&bob),
         amm::instruction::Swap {
@@ -303,8 +306,8 @@ fn update_fee_propagates_to_next_swap() {
     world
         .ctx
         .svm
-        .send_ok(swap, &[&bob.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(swap, &[&bob.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     assert_eq!(
         world.ctx.svm.token_balance(&bob.ata_y),
@@ -319,7 +322,11 @@ fn update_fee_propagates_to_next_swap() {
 fn update_authority_rotation_transfers_admin_privilege() {
     let mut world = setup();
     let (alice_admin, pool) = world.fresh_pool(30);
+    // Override the default "Admin" alias with role-specific names since this
+    // test has two admins (before and after rotation).
+    world.alias(alice_admin.pubkey(), "Alice");
     let bob_admin = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    world.alias(bob_admin.pubkey(), "Bob");
 
     // Alice rotates to bob.
     let rotate = world.ctx.program().build_ix(
@@ -334,8 +341,8 @@ fn update_authority_rotation_transfers_admin_privilege() {
     world
         .ctx
         .svm
-        .send_ok(rotate, &[&alice_admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(rotate, &[&alice_admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config.authority, Some(bob_admin.pubkey()));
@@ -351,8 +358,8 @@ fn update_authority_rotation_transfers_admin_privilege() {
     world
         .ctx
         .svm
-        .send_ok(bob_locks, &[&bob_admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(bob_locks, &[&bob_admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert!(
         config.locked,
@@ -372,7 +379,7 @@ fn update_authority_rotation_transfers_admin_privilege() {
         .svm
         .send_instruction(alice_tries, &[&alice_admin])
         .unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "former authority must not retain privilege"
@@ -401,7 +408,7 @@ fn update_fee_rejects_invalid_fee_at_denominator() {
         },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&admin]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "fee_bps == FEE_DENOMINATOR must reject");
     assert!(
         r.logs().iter().any(|l| l.contains("InvalidFee")),

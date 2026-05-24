@@ -20,8 +20,7 @@
 
 mod common;
 
-use amm::AddLiquidityBundle;
-use anchor_litesvm::{Aliases, TestHelpers, TransactionHelpers};
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::setup;
 
 /// MINIMUM_LIQUIDITY = 1000. With (1, 1), sqrt(1) = 1 <= 1000. With
@@ -35,7 +34,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
     {
         let mut world = setup();
         let (_admin, pool) = world.fresh_pool(30);
-        let alice = world.make_user(10_000_000_000, 1_000_000, 1_000_000);
+        let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
 
         let ix = world.ctx.program().build_ix(
             pool.add_liquidity_bundle(&alice),
@@ -50,7 +49,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
             .svm
             .send_instruction(ix, &[&alice.signer])
             .unwrap();
-        r.print_logs_structured(&Aliases::default());
+        r.print_logs_structured(&world.aliases);
         assert!(!r.is_success(), "(1, 1) deposit must fail below threshold");
 
         // Alice's tokens never moved.
@@ -66,7 +65,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
     {
         let mut world = setup();
         let (_admin, pool) = world.fresh_pool(30);
-        let alice = world.make_user(10_000_000_000, 1_000_000, 1_000_000);
+        let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
 
         let ix = world.ctx.program().build_ix(
             pool.add_liquidity_bundle(&alice),
@@ -81,7 +80,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
             .svm
             .send_instruction(ix, &[&alice.signer])
             .unwrap();
-        r.print_logs_structured(&Aliases::default());
+        r.print_logs_structured(&world.aliases);
         assert!(
             !r.is_success(),
             "(1_000, 1_000) deposit must fail at the boundary"
@@ -100,7 +99,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
 fn minimal_viable_first_deposit_succeeds_just_above_threshold() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user(10_000_000_000, 10_000, 10_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 10_000);
 
     let ix = world.ctx.program().build_ix(
         pool.add_liquidity_bundle(&alice),
@@ -113,8 +112,8 @@ fn minimal_viable_first_deposit_succeeds_just_above_threshold() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&alice.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&alice.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     assert_eq!(
         world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
@@ -152,7 +151,7 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     let (_admin, pool) = world.fresh_pool(30);
 
     // Step 1: Mallory opens the pool minimally.
-    let mallory = world.make_user(10_000_000_000, 2_000_000, 10_000);
+    let mallory = world.make_user("Mallory", 10_000_000_000, 2_000_000, 10_000);
     world.deposit(&pool, &mallory, 1_001, 1_001, 1);
 
     // Step 2: Mallory inflates vault_x by 1_000_000 via direct SPL deposit.
@@ -172,7 +171,7 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     assert_eq!(world.ctx.svm.token_balance(&pool.vault_y), Some(1_001));
 
     // Step 3: Honest Henry attempts a "normal" deposit.
-    let henry = world.make_user(10_000_000_000, 1_000_000, 1_000_000);
+    let henry = world.make_user("Henry", 10_000_000_000, 1_000_000, 1_000_000);
     let henry_x_before = world.ctx.svm.token_balance(&henry.ata_x);
     let henry_y_before = world.ctx.svm.token_balance(&henry.ata_y);
     // Capture lamports too: state rolls back on failure, but tx fees do not.
@@ -193,7 +192,7 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
         .svm
         .send_instruction(ix, &[&henry.signer])
         .unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "honest deposit against inflated pool must fail rather than mint 0 LP"

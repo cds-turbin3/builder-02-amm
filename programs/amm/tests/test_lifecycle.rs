@@ -16,8 +16,8 @@
 
 mod common;
 
-use amm::{RemoveLiquidityBundle, SwapBundle, SwapKind};
-use anchor_litesvm::{Aliases, TestHelpers, TransactionHelpers};
+use amm::SwapKind;
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::{setup, Pool, UserAccounts};
 
 fn k_of(world: &common::Bootstrap, pool: &Pool) -> u128 {
@@ -40,22 +40,13 @@ fn swap_a_to_b(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts, 
     world
         .ctx
         .svm
-        .send_ok(ix, &[&user.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&user.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 }
 
 fn swap_b_to_a(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts, amount_in: u64) {
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: user.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: user.ata_x,
-            user_y: user.ata_y,
-        },
+        pool.swap_bundle(user),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in,
@@ -67,8 +58,8 @@ fn swap_b_to_a(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts, 
     world
         .ctx
         .svm
-        .send_ok(ix, &[&user.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&user.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 }
 
 fn withdraw_all(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts) {
@@ -81,18 +72,7 @@ fn withdraw_all(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts)
         return;
     }
     let ix = world.ctx.program().build_ix(
-        RemoveLiquidityBundle {
-            user: user.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: user.ata_x,
-            user_y: user.ata_y,
-            user_lp: user.ata_lp(&pool.mint_lp),
-        },
+        pool.remove_liquidity_bundle(user),
         amm::instruction::RemoveLiquidity {
             lp_burn: lp,
             min_a: 0,
@@ -102,8 +82,8 @@ fn withdraw_all(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts)
     world
         .ctx
         .svm
-        .send_ok(ix, &[&user.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&user.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 }
 
 /// Full lifecycle: two LPs deposit, two traders swap in both directions,
@@ -118,10 +98,10 @@ fn lifecycle_conserves_tokens_across_users_and_vaults() {
     // Two LPs and two traders. Total minted to users via make_user:
     //   X = 10_000 (alice) + 5_000 (bob_lp) + 2_000 (carol) + 1_000 (dan) = 18_000
     //   Y = 40_000 (alice) + 20_000 (bob_lp) + 1_000 (carol) + 2_000 (dan) = 63_000
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
-    let bob_lp = world.make_user(10_000_000_000, 5_000, 20_000);
-    let carol = world.make_user(10_000_000_000, 2_000, 1_000);
-    let dan = world.make_user(10_000_000_000, 1_000, 2_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
+    let bob_lp = world.make_user("BobLP", 10_000_000_000, 5_000, 20_000);
+    let carol = world.make_user("Carol", 10_000_000_000, 2_000, 1_000);
+    let dan = world.make_user("Dan", 10_000_000_000, 1_000, 2_000);
     let total_x_minted: u64 = 18_000;
     let total_y_minted: u64 = 63_000;
 
@@ -183,7 +163,7 @@ fn fees_accrue_to_lp_via_k_growth() {
     // Alice provides liquidity at a 1:4 ratio. After this:
     //   vaults = (1_000, 4_000); k_initial = 4_000_000
     //   alice has 1_000 LP; lp_vault has 1_000 LP; supply = 2_000
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1);
 
     let k_after_deposit = k_of(&world, &pool);
@@ -192,7 +172,7 @@ fn fees_accrue_to_lp_via_k_growth() {
     // Several traders swap in both directions, generating fees. Vary the
     // amounts each iteration so the resulting txs have distinct signatures
     // (identical-tx replays would be rejected as AlreadyProcessed).
-    let trader = world.make_user(10_000_000_000, 5_000, 20_000);
+    let trader = world.make_user("Trader", 10_000_000_000, 5_000, 20_000);
     for i in 0..5 {
         swap_a_to_b(&mut world, &pool, &trader, 50 + i);
         swap_b_to_a(&mut world, &pool, &trader, 200 + i);
