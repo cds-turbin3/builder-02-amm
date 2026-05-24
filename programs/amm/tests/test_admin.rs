@@ -322,11 +322,12 @@ fn update_fee_propagates_to_next_swap() {
 fn update_authority_rotation_transfers_admin_privilege() {
     let mut world = setup();
     let (alice_admin, pool) = world.fresh_pool(30);
-    // Override the default "Admin" alias with role-specific names since this
-    // test has two admins (before and after rotation).
-    world.alias(alice_admin.pubkey(), "Alice");
+    // alice_admin keeps the default "Admin" alias from fresh_pool. After the
+    // rotation, "Admin" in log frames will refer to her former role; bob
+    // gets a role-suffixed name so the rotation is visible in the trace and
+    // he doesn't collide with a plain "Bob" trader in other tests.
     let bob_admin = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
-    world.alias(bob_admin.pubkey(), "Bob");
+    world.alias(bob_admin.pubkey(), "BobAdmin");
 
     // Alice rotates to bob.
     let rotate = world.ctx.program().build_ix(
