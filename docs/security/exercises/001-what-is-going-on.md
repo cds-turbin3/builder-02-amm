@@ -205,7 +205,7 @@ let r = world
     .svm
     .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin])
     .unwrap();
-r.print_logs_structured();
+r.print_logs_structured(&world.aliases);
 assert!(
     r.is_success(),
     "the three-ix atomic tx is currently allowed; this is the bug"

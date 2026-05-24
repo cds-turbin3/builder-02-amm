@@ -93,8 +93,8 @@ programs/amm/tests/
 `common/mod.rs` holds three things:
 
 - **`Pool`**: a `#[derive(Copy, Clone)]` struct holding the pool-shared PDAs and ATAs (config, mint_lp, vault_x/y/lp). One construction (`Pool::derive(seed, mint_x, mint_y)`) computes all of them. Tests that exercise an existing pool re-use this fixture across instructions.
-- **`UserAccounts`**: a per-user keypair plus their token ATAs. Created via `world.make_user(sol, x_balance, y_balance)`. Composes with `Pool` to fill out instruction-specific bundles.
-- **`Bootstrap`**: the test world. Carries the `AnchorContext`, the two mints, and the mint authority. Provides `fresh_pool(fee_bps)` (init + return admin + pool) and `deposit(...)` helpers for the common setup paths.
+- **`UserAccounts`**: a per-user keypair plus their token ATAs. Created via `world.make_user(name, sol, x_balance, y_balance)`. The `name` is registered in the world's alias table so structured logs render the signer pubkey as that name (e.g. `signer=Bob`) instead of raw base58. Composes with `Pool` to fill out instruction-specific bundles.
+- **`Bootstrap`**: the test world. Carries the `AnchorContext`, the two mints, the mint authority, and an `aliases: Aliases` table that accumulates as actors and pool components get created (`amm` program ID, `Admin`, `Pool`, vaults, mints, every user). Provides `fresh_pool(fee_bps)` (init + return admin + pool, auto-aliases admin and pool components), `make_user(name, ...)`, `deposit(...)`, `set_locked(...)`, and `alias(pubkey, name)` for ad-hoc renames (later inserts shadow earlier ones, so this also handles role changes mid-test like authority rotation).
 
 Each test file is one instruction or one scenario family.
 
@@ -145,9 +145,9 @@ sequenceDiagram
     participant Token as SPL Token
 
     Test->>Test: pool = Pool::derive(seed, mint_x, mint_y)
-    Test->>Test: alice = world.make_user(sol, x_bal, y_bal)
+    Test->>Test: alice = world.make_user("Alice", sol, x_bal, y_bal)
     Test->>Test: ix = build_ix(AddLiquidityBundle{...}, AddLiquidity{a,b,min_lp})
-    Test->>SVM: send_ok(ix, &[&alice.signer])
+    Test->>SVM: send_ok(ix, &[&alice.signer], &world.aliases)
     SVM->>Amm: invoke add_liquidity
     Amm->>Amm: try_accounts (init_if_needed user_lp ATA)
     Amm->>Amm: require !config.locked
@@ -319,8 +319,8 @@ The minimum recipe:
 2. Add a `tests/test_<scenario>.rs` file with `#![cfg(feature = "test-helpers")]` and `mod common;`.
 3. Use `setup()` and `world.fresh_pool(fee_bps)` from `common` for the standard setup.
 4. Build the bundle by hand or via a helper on `Bootstrap` (add one if the setup is reused across tests).
-5. `world.ctx.svm.send_ok(ix, &[&signer]).print_logs_structured();` for happy paths.
-6. `let r = world.ctx.svm.send_instruction(...).unwrap(); r.print_logs_structured(); assert!(!r.is_success(), ...)` for expected failures.
+5. `world.ctx.svm.send_ok(ix, &[&signer], &world.aliases).print_logs_structured(&world.aliases);` for happy paths.
+6. `let r = world.ctx.svm.send_instruction(...).unwrap(); r.print_logs_structured(&world.aliases); assert!(!r.is_success(), ...)` for expected failures.
 7. Assert on token balances (`world.ctx.svm.token_balance(&ata)`), lamport balances (`world.ctx.svm.get_balance(&pubkey)`), and config state (`world.ctx.get_account::<Config>(&pool.config)`).
 
 The pre-commit hook runs `cargo clippy --all-targets --features amm/test-helpers -- -D warnings`, so test code is held to the same lint standard as the program code.

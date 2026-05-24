@@ -6,8 +6,7 @@
 
 mod common;
 
-use amm::RemoveLiquidityBundle;
-use anchor_litesvm::{Aliases, TestHelpers, TransactionHelpers};
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::setup;
 
 #[test]
@@ -15,7 +14,7 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
     // Post-deposit state: vaults (1_000, 4_000), alice LP = 1_000,
     // lp_vault LP = 1_000, total supply = 2_000.
@@ -34,8 +33,8 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&alice.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&alice.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Alice burned 500 LP, received 250 X + 1_000 Y.
     assert_eq!(
@@ -68,7 +67,7 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
 fn remove_liquidity_rejects_when_amount_below_min() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
 
     // Burning 500 LP returns (250, 1_000). Demanding min_a = 300 must reject.
@@ -85,7 +84,7 @@ fn remove_liquidity_rejects_when_amount_below_min() {
         .svm
         .send_instruction(ix, &[&alice.signer])
         .unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "remove must fail when min_a exceeds computed share"
@@ -108,7 +107,7 @@ fn remove_liquidity_rejects_when_amount_below_min() {
 fn remove_liquidity_rejects_when_pool_locked() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
     world.set_locked(&admin, &pool, true);
 
@@ -125,7 +124,7 @@ fn remove_liquidity_rejects_when_pool_locked() {
         .svm
         .send_instruction(ix, &[&alice.signer])
         .unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "remove must fail on locked pool");
     assert!(
         r.logs().iter().any(|l| l.contains("PoolLocked")),

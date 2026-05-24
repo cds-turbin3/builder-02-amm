@@ -6,8 +6,8 @@
 
 mod common;
 
-use amm::{SwapBundle, SwapKind};
-use anchor_litesvm::{Aliases, TestHelpers, TransactionHelpers};
+use amm::SwapKind;
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::setup;
 
 #[test]
@@ -16,13 +16,13 @@ fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
     let (_admin, pool) = world.fresh_pool(30);
 
     // Open the pool with reserves (1_000, 4_000).
-    let lp = world.make_user(10_000_000_000, 10_000, 40_000);
+    let lp = world.make_user("LP", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &lp, 1_000, 4_000, 1_000);
 
     // Bob brings 1_000 X; swap 100 of them for Y.
     //   amount_after_fee = floor(100 * 9_970 / 10_000) = 99
     //   amount_out = floor(99 * 4_000 / (1_000 + 99)) = floor(396_000 / 1_099) = 360
-    let bob = world.make_user(10_000_000_000, 1_000, 0);
+    let bob = world.make_user("Bob", 10_000_000_000, 1_000, 0);
     let ix = world.ctx.program().build_ix(
         pool.swap_bundle(&bob),
         amm::instruction::Swap {
@@ -36,8 +36,8 @@ fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&bob.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&bob.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Bob paid 100 X, received 360 Y.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(900), "bob X");
@@ -58,13 +58,13 @@ fn exact_output_swap_a_to_b_pays_calculated_input() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    let lp = world.make_user(10_000_000_000, 10_000, 40_000);
+    let lp = world.make_user("LP", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &lp, 1_000, 4_000, 1_000);
 
     // Bob wants exactly 360 Y. Required input by ceiling-rounded inverse:
     //   amount_in_after_fee = ceil(360 * 1_000 / (4_000 - 360)) = 99
     //   amount_in = ceil(99 * 10_000 / 9_970) = 100
-    let bob = world.make_user(10_000_000_000, 1_000, 0);
+    let bob = world.make_user("Bob", 10_000_000_000, 1_000, 0);
     let ix = world.ctx.program().build_ix(
         pool.swap_bundle(&bob),
         amm::instruction::Swap {
@@ -78,8 +78,8 @@ fn exact_output_swap_a_to_b_pays_calculated_input() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&bob.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&bob.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Bob paid exactly 100 X (at the max_amount_in cap), received exactly 360 Y.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(900), "bob X");
@@ -95,24 +95,16 @@ fn exact_input_swap_b_to_a_picks_reserves_in_reverse() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    let lp = world.make_user(10_000_000_000, 10_000, 40_000);
+    let lp = world.make_user("LP", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &lp, 1_000, 4_000, 1_000);
 
     // Bob brings Y; swap 100 Y for X.
     //   amount_after_fee = floor(100 * 9_970 / 10_000) = 99
     //   amount_out = floor(99 * 1_000 / (4_000 + 99)) = floor(99_000 / 4_099) = 24
-    let bob = world.make_user(10_000_000_000, 0, 1_000);
+    let bob = world.make_user("Bob", 10_000_000_000, 0, 1_000);
+
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 100,
@@ -124,8 +116,8 @@ fn exact_input_swap_b_to_a_picks_reserves_in_reverse() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&bob.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&bob.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Bob paid 100 Y, received 24 X.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_y), Some(900), "bob Y");
@@ -145,23 +137,14 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    let lp = world.make_user(10_000_000_000, 10_000, 40_000);
+    let lp = world.make_user("LP", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &lp, 1_000, 4_000, 1_000);
 
     // 100 X actually delivers 360 Y; demanding 500 Y must reject.
-    let bob = world.make_user(10_000_000_000, 1_000, 0);
+    let bob = world.make_user("Bob", 10_000_000_000, 1_000, 0);
     let bob_x_before = world.ctx.svm.token_balance(&bob.ata_x);
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 100,
@@ -171,7 +154,7 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
         },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&bob.signer]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "swap must fail when min_amount_out is unsatisfiable"
@@ -193,23 +176,14 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    let lp = world.make_user(10_000_000_000, 10_000, 40_000);
+    let lp = world.make_user("LP", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &lp, 1_000, 4_000, 1_000);
 
     // 360 Y output requires 100 X input (per the exact-output math); capping
     // at 50 X must reject.
-    let bob = world.make_user(10_000_000_000, 1_000, 0);
+    let bob = world.make_user("Bob", 10_000_000_000, 1_000, 0);
     let ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: bob.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: bob.ata_x,
-            user_y: bob.ata_y,
-        },
+        pool.swap_bundle(&bob),
         amm::instruction::Swap {
             kind: SwapKind::ExactOutput {
                 amount_out: 360,
@@ -219,7 +193,7 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
         },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&bob.signer]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(
         !r.is_success(),
         "exact-output swap must fail when input exceeds max"

@@ -10,8 +10,8 @@
 
 mod common;
 
-use amm::{RemoveLiquidityBundle, SwapBundle, SwapKind};
-use anchor_litesvm::{Aliases, TestHelpers, TransactionHelpers};
+use amm::SwapKind;
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::setup;
 
 /// A tiny `amount_in` against a normally-sized pool truncates the fee'd
@@ -27,10 +27,10 @@ use common::setup;
 fn swap_with_truncated_amount_in_returns_insufficient_output() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1);
 
-    let bob = world.make_user(10_000_000_000, 10, 0);
+    let bob = world.make_user("Bob", 10_000_000_000, 10, 0);
     let ix = world.ctx.program().build_ix(
         pool.swap_bundle(&bob),
         amm::instruction::Swap {
@@ -42,7 +42,7 @@ fn swap_with_truncated_amount_in_returns_insufficient_output() {
         },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&bob.signer]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "swap with amount_in = 1 must reject");
     assert!(
         r.logs().iter().any(|l| l.contains("InsufficientOutput")),
@@ -66,7 +66,7 @@ fn drain_to_minimum_liquidity_preserves_lock_vault_and_reserves() {
 
     // Alice opens and is the only LP.
     //   vaults = (1_000, 4_000); alice = 1_000 LP; lp_vault = 1_000 LP; supply = 2_000
-    let alice = world.make_user(10_000_000_000, 10_000, 40_000);
+    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
     world.deposit(&pool, &alice, 1_000, 4_000, 1);
 
     // Alice burns all her LP. The math:
@@ -84,8 +84,8 @@ fn drain_to_minimum_liquidity_preserves_lock_vault_and_reserves() {
     world
         .ctx
         .svm
-        .send_ok(burn, &[&alice.signer])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(burn, &[&alice.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Alice has zero LP and the proportional tokens back.
     assert_eq!(
@@ -109,7 +109,7 @@ fn drain_to_minimum_liquidity_preserves_lock_vault_and_reserves() {
     //     lp_from_a = floor(500 * 1_000 / 500)   = 1_000
     //     lp_from_b = floor(2_000 * 1_000 / 2_000) = 1_000
     //     min = 1_000 -> bob gets 1_000 LP
-    let bob = world.make_user(10_000_000_000, 1_000, 4_000);
+    let bob = world.make_user("Bob", 10_000_000_000, 1_000, 4_000);
     world.deposit(&pool, &bob, 500, 2_000, 1_000);
     assert_eq!(
         world.ctx.svm.token_balance(&bob.ata_lp(&pool.mint_lp)),

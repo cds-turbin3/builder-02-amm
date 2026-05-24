@@ -10,7 +10,7 @@
 mod common;
 
 use amm::{Config, InitializeBundle};
-use anchor_litesvm::{Aliases, Signer, TestHelpers, TransactionHelpers};
+use anchor_litesvm::{Signer, TestHelpers, TransactionHelpers};
 use common::{setup, Pool};
 
 #[test]
@@ -18,6 +18,9 @@ fn initialize_creates_config_lp_mint_and_vaults() {
     let mut world = setup();
     let admin = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
+    world.alias(admin.pubkey(), "Admin");
+    world.alias(pool.config, "Pool");
+    world.alias(pool.mint_lp, "MintLP");
 
     let fee_bps: u16 = 30;
     let ix = world.ctx.program().build_ix(
@@ -41,8 +44,8 @@ fn initialize_creates_config_lp_mint_and_vaults() {
     world
         .ctx
         .svm
-        .send_ok(ix, &[&admin])
-        .print_logs_structured(&Aliases::default());
+        .send_ok(ix, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Config carries the args verbatim and starts unlocked.
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
@@ -68,6 +71,7 @@ fn initialize_rejects_invalid_fee_at_denominator() {
     let mut world = setup();
     let admin = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
+    world.alias(admin.pubkey(), "Admin");
 
     let ix = world.ctx.program().build_ix(
         InitializeBundle {
@@ -87,7 +91,7 @@ fn initialize_rejects_invalid_fee_at_denominator() {
         },
     );
     let r = world.ctx.svm.send_instruction(ix, &[&admin]).unwrap();
-    r.print_logs_structured(&Aliases::default());
+    r.print_logs_structured(&world.aliases);
     assert!(!r.is_success(), "fee == FEE_DENOMINATOR must reject");
     assert!(
         r.logs().iter().any(|l| l.contains("InvalidFee")),
