@@ -41,13 +41,11 @@ fn swap_with_truncated_amount_in_returns_insufficient_output() {
             a_to_b: true,
         },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&bob.signer]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "swap with amount_in = 1 must reject");
-    assert!(
-        r.logs().iter().any(|l| l.contains("InsufficientOutput")),
-        "expected InsufficientOutput in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(ix, &[&bob.signer], &world.aliases, "InsufficientOutput")
+        .print_logs_structured(&world.aliases);
 
     // Bob's X is untouched.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(10));

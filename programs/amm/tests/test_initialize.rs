@@ -90,13 +90,11 @@ fn initialize_rejects_invalid_fee_at_denominator() {
             authority: Some(admin.pubkey()),
         },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&admin]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "fee == FEE_DENOMINATOR must reject");
-    assert!(
-        r.logs().iter().any(|l| l.contains("InvalidFee")),
-        "expected InvalidFee in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(ix, &[&admin], &world.aliases, "InvalidFee")
+        .print_logs_structured(&world.aliases);
 
     // Config was never created.
     assert!(!world.ctx.account_exists(&pool.config));

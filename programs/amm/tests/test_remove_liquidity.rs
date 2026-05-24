@@ -79,20 +79,11 @@ fn remove_liquidity_rejects_when_amount_below_min() {
             min_b: 1_000,
         },
     );
-    let r = world
+    world
         .ctx
         .svm
-        .send_instruction(ix, &[&alice.signer])
-        .unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "remove must fail when min_a exceeds computed share"
-    );
-    assert!(
-        r.logs().iter().any(|l| l.contains("SlippageExceeded")),
-        "expected SlippageExceeded in logs"
-    );
+        .send_err_named(ix, &[&alice.signer], &world.aliases, "SlippageExceeded")
+        .print_logs_structured(&world.aliases);
 
     // Alice's LP unchanged; vaults unchanged.
     assert_eq!(
@@ -119,15 +110,9 @@ fn remove_liquidity_rejects_when_pool_locked() {
             min_b: 0,
         },
     );
-    let r = world
+    world
         .ctx
         .svm
-        .send_instruction(ix, &[&alice.signer])
-        .unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "remove must fail on locked pool");
-    assert!(
-        r.logs().iter().any(|l| l.contains("PoolLocked")),
-        "expected PoolLocked in logs"
-    );
+        .send_err_named(ix, &[&alice.signer], &world.aliases, "PoolLocked")
+        .print_logs_structured(&world.aliases);
 }

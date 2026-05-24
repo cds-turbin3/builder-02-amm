@@ -86,12 +86,11 @@ fn update_authority_renounce_then_admin_calls_fail() {
         },
         amm::instruction::UpdateFee { new_fee_bps: 50 },
     );
-    let r = world.ctx.svm.send_instruction(after, &[&admin]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "admin instruction should fail after renounce"
-    );
+    world
+        .ctx
+        .svm
+        .send_err(after, &[&admin], &world.aliases)
+        .print_logs_structured(&world.aliases);
     let config2: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config2.fee_bps, 30, "fee unchanged after failed call");
 }
@@ -113,12 +112,11 @@ fn unauthorized_signer_cannot_update_fee() {
         },
         amm::instruction::UpdateFee { new_fee_bps: 1 },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&attacker]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "non-authority caller should not be able to update fee"
-    );
+    world
+        .ctx
+        .svm
+        .send_err(ix, &[&attacker], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config.fee_bps, 30, "fee remained at initial value");
@@ -140,12 +138,11 @@ fn unauthorized_signer_cannot_set_locked() {
         },
         amm::instruction::SetLocked { locked: true },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&attacker]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "attacker should not be able to lock the pool"
-    );
+    world
+        .ctx
+        .svm
+        .send_err(ix, &[&attacker], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert!(!config.locked, "pool remained unlocked");
@@ -179,13 +176,11 @@ fn set_locked_after_renounce_fails() {
         },
         amm::instruction::SetLocked { locked: true },
     );
-    let r = world.ctx.svm.send_instruction(lock_ix, &[&admin]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "set_locked must fail after renounce");
-    assert!(
-        r.logs().iter().any(|l| l.contains("AuthorityRenounced")),
-        "expected AuthorityRenounced in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(lock_ix, &[&admin], &world.aliases, "AuthorityRenounced")
+        .print_logs_structured(&world.aliases);
 }
 
 /// `update_authority` itself can be called by a non-authority. The handler's
@@ -206,12 +201,11 @@ fn unauthorized_signer_cannot_update_authority() {
             new_authority: Some(attacker.pubkey()),
         },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&attacker]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "attacker should not be able to take authority"
-    );
+    world
+        .ctx
+        .svm
+        .send_err(ix, &[&attacker], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(
@@ -253,13 +247,11 @@ fn update_authority_after_renounce_fails() {
             new_authority: Some(admin.pubkey()),
         },
     );
-    let r = world.ctx.svm.send_instruction(restore, &[&admin]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "renounce is irreversible");
-    assert!(
-        r.logs().iter().any(|l| l.contains("AuthorityRenounced")),
-        "expected AuthorityRenounced in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(restore, &[&admin], &world.aliases, "AuthorityRenounced")
+        .print_logs_structured(&world.aliases);
 }
 
 /// `update_fee` must propagate: after changing the fee, a subsequent swap
@@ -375,20 +367,11 @@ fn update_authority_rotation_transfers_admin_privilege() {
         },
         amm::instruction::SetLocked { locked: false },
     );
-    let r = world
+    world
         .ctx
         .svm
-        .send_instruction(alice_tries, &[&alice_admin])
-        .unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "former authority must not retain privilege"
-    );
-    assert!(
-        r.logs().iter().any(|l| l.contains("Unauthorized")),
-        "expected Unauthorized in logs"
-    );
+        .send_err_named(alice_tries, &[&alice_admin], &world.aliases, "Unauthorized")
+        .print_logs_structured(&world.aliases);
 }
 
 /// `update_fee` must reject `new_fee_bps >= FEE_DENOMINATOR`. Same boundary
@@ -408,13 +391,11 @@ fn update_fee_rejects_invalid_fee_at_denominator() {
             new_fee_bps: 10_000,
         },
     );
-    let r = world.ctx.svm.send_instruction(ix, &[&admin]).unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(!r.is_success(), "fee_bps == FEE_DENOMINATOR must reject");
-    assert!(
-        r.logs().iter().any(|l| l.contains("InvalidFee")),
-        "expected InvalidFee in logs"
-    );
+    world
+        .ctx
+        .svm
+        .send_err_named(ix, &[&admin], &world.aliases, "InvalidFee")
+        .print_logs_structured(&world.aliases);
 
     // Fee unchanged.
     let config: Config = world.ctx.get_account(&pool.config).unwrap();

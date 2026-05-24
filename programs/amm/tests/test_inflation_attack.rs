@@ -44,13 +44,11 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
                 min_lp_tokens: 0,
             },
         );
-        let r = world
+        world
             .ctx
             .svm
-            .send_instruction(ix, &[&alice.signer])
-            .unwrap();
-        r.print_logs_structured(&world.aliases);
-        assert!(!r.is_success(), "(1, 1) deposit must fail below threshold");
+            .send_err(ix, &[&alice.signer], &world.aliases)
+            .print_logs_structured(&world.aliases);
 
         // Alice's tokens never moved.
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
@@ -75,16 +73,11 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
                 min_lp_tokens: 0,
             },
         );
-        let r = world
+        world
             .ctx
             .svm
-            .send_instruction(ix, &[&alice.signer])
-            .unwrap();
-        r.print_logs_structured(&world.aliases);
-        assert!(
-            !r.is_success(),
-            "(1_000, 1_000) deposit must fail at the boundary"
-        );
+            .send_err(ix, &[&alice.signer], &world.aliases)
+            .print_logs_structured(&world.aliases);
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_y), Some(1_000_000));
     }
@@ -190,13 +183,8 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     let r = world
         .ctx
         .svm
-        .send_instruction(ix, &[&henry.signer])
-        .unwrap();
-    r.print_logs_structured(&world.aliases);
-    assert!(
-        !r.is_success(),
-        "honest deposit against inflated pool must fail rather than mint 0 LP"
-    );
+        .send_err(ix, &[&henry.signer], &world.aliases)
+        .print_logs_structured(&world.aliases);
 
     // Token state rolls back: Henry's X/Y balances are exactly what they were.
     assert_eq!(world.ctx.svm.token_balance(&henry.ata_x), henry_x_before);
