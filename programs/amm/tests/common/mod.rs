@@ -9,7 +9,10 @@
 #![cfg(feature = "test-helpers")]
 #![allow(dead_code)]
 
-use amm::{AddLiquidityBundle, InitializeBundle, RemoveLiquidityBundle, SetLockedBundle, SwapBundle, CONFIG_SEED, LP_MINT_SEED};
+use amm::{
+    AddLiquidityBundle, InitializeBundle, RemoveLiquidityBundle, SetLockedBundle, SwapBundle,
+    CONFIG_SEED, LP_MINT_SEED,
+};
 use anchor_litesvm::{
     Aliases, AnchorContext, AnchorLiteSVM, Keypair, Pubkey, Signer, TestHelpers, TransactionHelpers,
 };
