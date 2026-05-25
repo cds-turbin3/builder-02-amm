@@ -12,7 +12,7 @@ mod common;
 
 use amm::SwapKind;
 use anchor_litesvm::TestHelpers;
-use common::setup;
+use common::{setup, SwapDir};
 
 /// A tiny `amount_in` against a normally-sized pool truncates the fee'd
 /// amount to zero, which (because the swap formula multiplies by 0) yields
@@ -38,7 +38,7 @@ fn swap_with_truncated_amount_in_returns_insufficient_output() {
             amount_in: 1,
             min_amount_out: 0,
         },
-        true,
+        SwapDir::AtoB,
         "InsufficientOutput",
     );
 

@@ -8,7 +8,7 @@ mod common;
 
 use amm::SwapKind;
 use anchor_litesvm::TestHelpers;
-use common::setup;
+use common::{setup, SwapDir};
 
 #[test]
 fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
@@ -30,7 +30,7 @@ fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
             amount_in: 100,
             min_amount_out: 1,
         },
-        true,
+        SwapDir::AtoB,
     );
 
     // Bob paid 100 X, received 360 Y.
@@ -66,7 +66,7 @@ fn exact_output_swap_a_to_b_pays_calculated_input() {
             amount_out: 360,
             max_amount_in: 100,
         },
-        true,
+        SwapDir::AtoB,
     );
 
     // Bob paid exactly 100 X (at the max_amount_in cap), received exactly 360 Y.
@@ -97,7 +97,7 @@ fn exact_input_swap_b_to_a_picks_reserves_in_reverse() {
             amount_in: 100,
             min_amount_out: 1,
         },
-        false,
+        SwapDir::BtoA,
     );
 
     // Bob paid 100 Y, received 24 X.
@@ -131,7 +131,7 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
             amount_in: 100,
             min_amount_out: 500,
         },
-        true,
+        SwapDir::AtoB,
         "SlippageExceeded",
     );
 
@@ -160,7 +160,7 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
             amount_out: 360,
             max_amount_in: 50,
         },
-        true,
+        SwapDir::AtoB,
         "SlippageExceeded",
     );
 }
