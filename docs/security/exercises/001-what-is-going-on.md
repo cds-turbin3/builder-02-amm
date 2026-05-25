@@ -23,8 +23,7 @@ Below is the entire output from the test, in chronological order. Six transactio
 
 ```
 [setup-1: initialize the pool]
-=== Structured Transaction Logs ===
-Instruction: CYbYnHW7…2yf5::Initialize
+── CYbYnHW7…2yf5::Initialize ──
 Transaction  signers=[6PqHNGix…xUVG]
 └── CYbYnHW7…2yf5::Initialize [1] ✓ 86420cu  signer=6PqHNGix…xUVG
     ├── System::CreateAccount [2] ✓
@@ -47,11 +46,9 @@ Transaction  signers=[6PqHNGix…xUVG]
     └── System::CreateAccount [2] ✓
 Compute Units (this run): 86420
 Fee: 5000 lamports
-====================================
 
 [setup-2: alice deposits liquidity]
-=== Structured Transaction Logs ===
-Instruction: CYbYnHW7…2yf5::AddLiquidity
+── CYbYnHW7…2yf5::AddLiquidity ──
 Transaction  signers=[8r9fJP9H…bjUA]
 └── CYbYnHW7…2yf5::AddLiquidity [1] ✓ 60121cu  signer=8r9fJP9H…bjUA
     ├── AssociatedToken::Create [2] ✓ 13416cu
@@ -65,11 +62,9 @@ Transaction  signers=[8r9fJP9H…bjUA]
     └── Token::MintTo [2] ✓ 119cu
 Compute Units (this run): 60121
 Fee: 5000 lamports
-====================================
 
 [A]
-=== Structured Transaction Logs ===
-Instruction: amm::SetLocked
+── amm::SetLocked ──
 Transaction  signers=[admin]
 └── amm::SetLocked [1] ✓ 4079cu  signer=admin
 Compute Units (this run): 4079
@@ -78,11 +73,9 @@ Fee: 5000 lamports
 Legend (2):
   amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
   admin = 6PqHNGixYAxRvMkzuMgEP1DjZzHZhGKVaAV9fSnxxUVG
-====================================
 
 [B]
-=== Structured Transaction Logs ===
-Instruction: amm::Swap
+── amm::Swap ──
 Transaction  signers=[bob]
 └── amm::Swap [1] ✗ 32414cu  signer=bob
     ├── Error: custom program error: 0x1778
@@ -97,10 +90,8 @@ Fee: 5000 lamports
 Legend (2):
   amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
   bob = Dj4q3rbrubSeCSo4sg8EaQk9BLMX2AHR5etWeZZZKNNh
-====================================
 
 [C]
-=== Structured Transaction Logs ===
 Transaction  signers=[admin]
 ├── amm::SetLocked [1] ✓ 4081cu  signer=admin
 ├── amm::Swap [1] ✓ 28115cu  signer=admin
@@ -113,11 +104,9 @@ Fee: 5000 lamports
 Legend (2):
   admin = 6PqHNGixYAxRvMkzuMgEP1DjZzHZhGKVaAV9fSnxxUVG
   amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
-====================================
 
 [D]
-=== Structured Transaction Logs ===
-Instruction: amm::Swap
+── amm::Swap ──
 Transaction  signers=[bob]
 └── amm::Swap [1] ✗ 32414cu  signer=bob
     ├── Error: custom program error: 0x1778
@@ -132,7 +121,6 @@ Fee: 5000 lamports
 Legend (2):
   amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
   bob = Dj4q3rbrubSeCSo4sg8EaQk9BLMX2AHR5etWeZZZKNNh
-====================================
 ```
 
 ## The question

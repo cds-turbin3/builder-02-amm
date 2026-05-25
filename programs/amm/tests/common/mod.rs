@@ -33,8 +33,8 @@ use amm::{
     SwapKind, UpdateAuthorityBundle, UpdateFeeBundle, CONFIG_SEED, LP_MINT_SEED,
 };
 use anchor_litesvm::{
-    Aliases, AnchorContext, AnchorLiteSVM, Instruction, Keypair, Pubkey, Signer, TestHelpers,
-    TransactionHelpers, TransactionResult,
+    AnchorContext, AnchorLiteSVM, Instruction, Keypair, Pubkey, Signer, TestHelpers,
+    TransactionResult,
 };
 use anchor_spl::associated_token::get_associated_token_address;
 
@@ -177,14 +177,15 @@ impl UserAccounts {
 }
 
 /// The stage on which actors perform: owns the `AnchorContext`, the
-/// two mints used by every test, the mint authority that can mint
-/// either, and the `Aliases` table the structured-log renderer reads.
+/// two mints used by every test, and the mint authority that can mint
+/// either. The structured-log alias table lives on `ctx.aliases`;
+/// `Scenario::alias` delegates to it so verbs read as `world.alias(...)`
+/// in tests.
 pub struct Scenario {
     pub ctx: AnchorContext,
     pub mint_authority: Keypair,
     pub mint_x: Pubkey,
     pub mint_y: Pubkey,
-    pub aliases: Aliases,
 }
 
 /// Bootstrap a fresh `Scenario`: program loaded, two SPL Token mints
@@ -194,15 +195,15 @@ pub fn setup() -> Scenario {
     let mint_authority = ctx.svm.create_funded_account(DEFAULT_SOL).unwrap();
     let mint_x_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
     let mint_y_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
+    let (mint_x, mint_y) = (mint_x_kp.pubkey(), mint_y_kp.pubkey());
+    ctx.alias(amm::ID, "amm")
+        .alias(mint_x, "MintX")
+        .alias(mint_y, "MintY");
     Scenario {
         ctx,
         mint_authority,
-        mint_x: mint_x_kp.pubkey(),
-        mint_y: mint_y_kp.pubkey(),
-        aliases: Aliases::default()
-            .with(amm::ID, "amm")
-            .with(mint_x_kp.pubkey(), "MintX")
-            .with(mint_y_kp.pubkey(), "MintY"),
+        mint_x,
+        mint_y,
     }
 }
 
@@ -211,12 +212,12 @@ impl Scenario {
     // Alias-table primitives
     // -----------------------------------------------------------------
 
-    /// Register `pubkey -> label` in the alias table. Later inserts
-    /// shadow earlier ones, so this also serves as a rename when an
-    /// actor's role changes mid-test (e.g. authority rotation).
+    /// Register `pubkey -> label` in the context's alias table. Later
+    /// inserts shadow earlier ones, so this also serves as a rename
+    /// when an actor's role changes mid-test (e.g. authority rotation).
+    /// Thin delegator over [`AnchorContext::alias`].
     pub fn alias(&mut self, pubkey: Pubkey, label: impl Into<String>) {
-        let taken = std::mem::take(&mut self.aliases);
-        self.aliases = taken.with(pubkey, label.into());
+        self.ctx.alias(pubkey, label);
     }
 
     // -----------------------------------------------------------------
@@ -363,9 +364,8 @@ impl Scenario {
             },
         );
         self.ctx
-            .svm
-            .send_ok(ix, &[&initializer.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&initializer.signer])
+            .print_logs_structured();
     }
 
     pub fn deposit(
@@ -378,9 +378,8 @@ impl Scenario {
     ) {
         let ix = self.build_deposit_ix(user, pool, amount_a, amount_b, min_lp_tokens);
         self.ctx
-            .svm
-            .send_ok(ix, &[&user.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&user.signer])
+            .print_logs_structured();
     }
 
     pub fn remove_liquidity(
@@ -393,33 +392,29 @@ impl Scenario {
     ) {
         let ix = self.build_remove_liquidity_ix(user, pool, lp_burn, min_a, min_b);
         self.ctx
-            .svm
-            .send_ok(ix, &[&user.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&user.signer])
+            .print_logs_structured();
     }
 
     pub fn swap(&mut self, user: &UserAccounts, pool: &Pool, kind: SwapKind, dir: SwapDir) {
         let ix = self.build_swap_ix(user, pool, kind, dir);
         self.ctx
-            .svm
-            .send_ok(ix, &[&user.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&user.signer])
+            .print_logs_structured();
     }
 
     pub fn set_locked(&mut self, admin: &UserAccounts, pool: &Pool, locked: bool) {
         let ix = self.build_set_locked_ix(admin, pool, locked);
         self.ctx
-            .svm
-            .send_ok(ix, &[&admin.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&admin.signer])
+            .print_logs_structured();
     }
 
     pub fn update_fee(&mut self, admin: &UserAccounts, pool: &Pool, new_fee_bps: u16) {
         let ix = self.build_update_fee_ix(admin, pool, new_fee_bps);
         self.ctx
-            .svm
-            .send_ok(ix, &[&admin.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&admin.signer])
+            .print_logs_structured();
     }
 
     /// Run `update_authority`. Pass `Some(&new_admin)` to rotate or
@@ -432,9 +427,8 @@ impl Scenario {
     ) {
         let ix = self.build_update_authority_ix(admin, pool, new_authority);
         self.ctx
-            .svm
-            .send_ok(ix, &[&admin.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+            .send_ok(ix, &[&admin.signer])
+            .print_logs_structured();
     }
 
     // -----------------------------------------------------------------
@@ -472,9 +466,8 @@ impl Scenario {
             },
         );
         self.ctx
-            .svm
-            .send_err_named(ix, &[&initializer.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&initializer.signer], error)
+            .print_logs_structured()
     }
 
     pub fn deposit_expecting(
@@ -488,9 +481,8 @@ impl Scenario {
     ) -> TransactionResult {
         let ix = self.build_deposit_ix(user, pool, amount_a, amount_b, min_lp_tokens);
         self.ctx
-            .svm
-            .send_err_named(ix, &[&user.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&user.signer], error)
+            .print_logs_structured()
     }
 
     pub fn remove_liquidity_expecting(
@@ -504,9 +496,8 @@ impl Scenario {
     ) -> TransactionResult {
         let ix = self.build_remove_liquidity_ix(user, pool, lp_burn, min_a, min_b);
         self.ctx
-            .svm
-            .send_err_named(ix, &[&user.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&user.signer], error)
+            .print_logs_structured()
     }
 
     pub fn swap_expecting(
@@ -519,9 +510,8 @@ impl Scenario {
     ) -> TransactionResult {
         let ix = self.build_swap_ix(user, pool, kind, dir);
         self.ctx
-            .svm
-            .send_err_named(ix, &[&user.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&user.signer], error)
+            .print_logs_structured()
     }
 
     pub fn set_locked_expecting(
@@ -533,9 +523,8 @@ impl Scenario {
     ) -> TransactionResult {
         let ix = self.build_set_locked_ix(admin, pool, locked);
         self.ctx
-            .svm
-            .send_err_named(ix, &[&admin.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&admin.signer], error)
+            .print_logs_structured()
     }
 
     pub fn update_fee_expecting(
@@ -547,9 +536,8 @@ impl Scenario {
     ) -> TransactionResult {
         let ix = self.build_update_fee_ix(admin, pool, new_fee_bps);
         self.ctx
-            .svm
-            .send_err_named(ix, &[&admin.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&admin.signer], error)
+            .print_logs_structured()
     }
 
     pub fn update_authority_expecting(
@@ -561,9 +549,8 @@ impl Scenario {
     ) -> TransactionResult {
         let ix = self.build_update_authority_ix(admin, pool, new_authority);
         self.ctx
-            .svm
-            .send_err_named(ix, &[&admin.signer], &self.aliases, error)
-            .print_logs_structured(&self.aliases)
+            .send_err_named(ix, &[&admin.signer], error)
+            .print_logs_structured()
     }
 
     // -----------------------------------------------------------------
