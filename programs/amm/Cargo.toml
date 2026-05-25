@@ -33,7 +33,7 @@ amm-math = { path = "../../crates/amm-math" }
 # Optional: pulled in only by the `test-helpers` feature so the BPF binary
 # stays clean. anchor_litesvm re-exports the `Bundle` and `BundledPubkeys`
 # derives, so this single dep is enough.
-anchor-litesvm = { path = "/home/amal/oss/upstream/anchor-litesvm/crates/anchor-litesvm", optional = true }
+anchor-litesvm = { path = "../../../../oss/upstream/anchor-litesvm/crates/anchor-litesvm", optional = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
