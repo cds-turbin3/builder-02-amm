@@ -1,51 +1,30 @@
 //! Initialize a pool and assert the resulting on-chain state.
 //!
-//! Scenario: an admin creates a pool for the (mint_x, mint_y) pair at seed=0
-//! with a 30 bps fee, naming themselves as the authority. The handler should
-//! init the Config PDA, the LP mint, both reserve vaults, and the
-//! permanent-lock vault. None of the vaults receive tokens yet (no deposit).
+//! Cast: one actor (`admin`) playing initializer and authority.
+//! Subjects: none; the (mint_x, mint_y) pair lives on the `Scenario`,
+//! not as a per-test subject.
+//!
+//! See `docs/testing/actors-as-first-class-citizens.md` for the
+//! methodology.
 
 #![cfg(feature = "test-helpers")]
 
 mod common;
 
-use amm::{Config, InitializeBundle};
-use anchor_litesvm::{Signer, TestHelpers, TransactionHelpers};
+use amm::Config;
+use anchor_litesvm::TestHelpers;
 use common::{setup, Pool};
 
 #[test]
 fn initialize_creates_config_lp_mint_and_vaults() {
     let mut world = setup();
-    let admin = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let admin = world.cast("Admin");
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
-    world.alias(admin.pubkey(), "Admin");
     world.alias(pool.config, "Pool");
     world.alias(pool.mint_lp, "MintLP");
 
     let fee_bps: u16 = 30;
-    let ix = world.ctx.program().build_ix(
-        InitializeBundle {
-            initializer: admin.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            lp_vault: pool.lp_vault,
-            config: pool.config,
-        },
-        amm::instruction::Initialize {
-            seed: pool.seed,
-            fee_bps,
-            authority: Some(admin.pubkey()),
-        },
-    );
-
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&admin], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    world.initialize(&admin, &pool, fee_bps, Some(&admin));
 
     // Config carries the args verbatim and starts unlocked.
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
@@ -69,32 +48,10 @@ fn initialize_creates_config_lp_mint_and_vaults() {
 #[test]
 fn initialize_rejects_invalid_fee_at_denominator() {
     let mut world = setup();
-    let admin = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    let admin = world.cast("Admin");
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
-    world.alias(admin.pubkey(), "Admin");
 
-    let ix = world.ctx.program().build_ix(
-        InitializeBundle {
-            initializer: admin.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            mint_lp: pool.mint_lp,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            lp_vault: pool.lp_vault,
-            config: pool.config,
-        },
-        amm::instruction::Initialize {
-            seed: pool.seed,
-            fee_bps: 10_000,
-            authority: Some(admin.pubkey()),
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_err_named(ix, &[&admin], &world.aliases, "InvalidFee")
-        .print_logs_structured(&world.aliases);
+    world.initialize_expecting(&admin, &pool, 10_000, Some(&admin), "InvalidFee");
 
     // Config was never created.
     assert!(!world.ctx.account_exists(&pool.config));
