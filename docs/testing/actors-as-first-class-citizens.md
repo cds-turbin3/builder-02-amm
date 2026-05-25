@@ -226,14 +226,38 @@ alias table:
 | `initialize(initializer, pool, fee_bps, authority)` | inline `InitializeBundle` builds in `test_initialize.rs` |
 | `deposit(user, pool, a, b, min_lp)` | unchanged at the call site; arg order is user-first now |
 | `remove_liquidity(user, pool, lp_burn, min_a, min_b)` | inline `RemoveLiquidityBundle` builds |
-| `swap(user, pool, kind, a_to_b)` | inline `SwapBundle` builds (~15 callsites) |
+| `swap(user, pool, kind, dir: SwapDir)` | inline `SwapBundle` builds (~15 callsites) |
 | `set_locked(admin, pool, locked)` | unchanged at the call site; admin's type changed |
 | `update_fee(admin, pool, new_fee_bps)` | inline `UpdateFeeBundle` builds |
 | `update_authority(admin, pool, new_authority: Option<&UserAccounts>)` | inline `UpdateAuthorityBundle` builds |
 | `mint_to_x` / `mint_to_y(user, amount)` | inline `mint_to` for the admin-as-trader promotion |
 | `mint_to_vault_x` / `mint_to_vault_y(pool, amount)` | inline `mint_to` for the inflation-attack donation |
 
-### e. Negative-path verbs
+### e. Typed `SwapDir` instead of `bool`
+
+The on-chain `Swap` instruction takes `a_to_b: bool`. At the test-API
+layer, that boolean is a mystery value at the call site:
+`world.swap(&bob, &pool, kind, true)` doesn't tell a reader which mint
+goes in and which comes out. The test layer lifts it to an enum:
+
+```rust
+pub enum SwapDir { AtoB, BtoA }
+```
+
+`SwapDir::AtoB` is "spend X, receive Y"; `SwapDir::BtoA` is the
+reverse. The verb converts to the bool at the boundary when building
+the ix; the program API stays as-is. Call sites read:
+
+```rust
+world.swap_expecting(&bob, &pool, kind, SwapDir::AtoB, "PoolLocked");
+```
+
+This is a small typed-wrapping move and the same pattern would apply to
+any other boolean-flagged instruction that ever shows up. The principle:
+bools at the API surface are a smell when they encode a *direction* or
+a *mode*; lift them to enums the moment two callsites exist.
+
+### f. Negative-path verbs
 
 Each happy-path verb has an `_expecting(..., error)` companion. The
 error string is matched as a substring against both the transaction
@@ -255,7 +279,7 @@ assert_eq!(henry_lamports_before - henry_lamports_after, fee, ...);
 
 Tests that don't need the result can ignore it.
 
-### f. The escape hatch: `s.alias` and `s.ctx`
+### g. The escape hatch: `s.alias` and `s.ctx`
 
 Two negative tests exercise failures that are *by construction* off the
 verb's natural derivation path:
@@ -340,7 +364,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     // Step 2: negative-path verb with named error
     world.swap_expecting(&bob, &pool,
         SwapKind::ExactInput { amount_in: 10_000, min_amount_out: 1 },
-        true, "PoolLocked");
+        SwapDir::AtoB, "PoolLocked");
 
     // Step 3: drop to lower-level send_instructions for the atomic-bundle attack
     // (only this part stays inline; the rest of the test is verbs)
@@ -356,7 +380,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     // ... bob still can't swap (verb again)
     world.swap_expecting(&bob, &pool,
         SwapKind::ExactInput { amount_in: 5_000, min_amount_out: 1 },
-        true, "PoolLocked");
+        SwapDir::AtoB, "PoolLocked");
 }
 ```
 

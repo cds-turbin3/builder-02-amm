@@ -37,7 +37,7 @@ mod common;
 
 use amm::{SwapBundle, SwapKind};
 use anchor_litesvm::{TestHelpers, TransactionHelpers};
-use common::setup;
+use common::{setup, SwapDir};
 
 #[test]
 fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
@@ -71,7 +71,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             amount_in: 10_000,
             min_amount_out: 1,
         },
-        true,
+        SwapDir::AtoB,
         "PoolLocked",
     );
 
@@ -166,7 +166,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             amount_in: 5_000,
             min_amount_out: 1,
         },
-        true,
+        SwapDir::AtoB,
         "PoolLocked",
     );
 }

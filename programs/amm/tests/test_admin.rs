@@ -13,7 +13,7 @@ mod common;
 
 use amm::{Config, SwapKind};
 use anchor_litesvm::TestHelpers;
-use common::setup;
+use common::{setup, SwapDir};
 
 #[test]
 fn update_fee_changes_fee_bps() {
@@ -153,7 +153,7 @@ fn update_fee_propagates_to_next_swap() {
             amount_in: 100,
             min_amount_out: 1,
         },
-        true,
+        SwapDir::AtoB,
     );
 
     assert_eq!(

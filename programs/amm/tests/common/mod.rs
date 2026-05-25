@@ -48,6 +48,25 @@ const AMM_BYTES: &[u8] = include_bytes!("../../../../target/deploy/amm.so");
 /// scenario deliberately probes the lamports-side.
 pub const DEFAULT_SOL: u64 = 10_000_000_000;
 
+/// Swap direction at the test-API layer. The on-chain instruction takes
+/// `a_to_b: bool`; that boolean is a mystery value at the call site
+/// (`world.swap(&bob, &pool, kind, true)` doesn't tell a reader which
+/// direction the trade goes). This enum is the surface tests use; the
+/// `Scenario` verbs convert to the bool when building the ix.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SwapDir {
+    /// Spend mint X to receive mint Y.
+    AtoB,
+    /// Spend mint Y to receive mint X.
+    BtoA,
+}
+
+impl SwapDir {
+    fn a_to_b(self) -> bool {
+        matches!(self, SwapDir::AtoB)
+    }
+}
+
 /// All the pool-shared addresses a fixture needs, derived once from
 /// `(program_id, seed, mint_x, mint_y)`.
 #[derive(Copy, Clone, Debug)]
@@ -379,8 +398,8 @@ impl Scenario {
             .print_logs_structured(&self.aliases);
     }
 
-    pub fn swap(&mut self, user: &UserAccounts, pool: &Pool, kind: SwapKind, a_to_b: bool) {
-        let ix = self.build_swap_ix(user, pool, kind, a_to_b);
+    pub fn swap(&mut self, user: &UserAccounts, pool: &Pool, kind: SwapKind, dir: SwapDir) {
+        let ix = self.build_swap_ix(user, pool, kind, dir);
         self.ctx
             .svm
             .send_ok(ix, &[&user.signer], &self.aliases)
@@ -495,10 +514,10 @@ impl Scenario {
         user: &UserAccounts,
         pool: &Pool,
         kind: SwapKind,
-        a_to_b: bool,
+        dir: SwapDir,
         error: &str,
     ) -> TransactionResult {
-        let ix = self.build_swap_ix(user, pool, kind, a_to_b);
+        let ix = self.build_swap_ix(user, pool, kind, dir);
         self.ctx
             .svm
             .send_err_named(ix, &[&user.signer], &self.aliases, error)
@@ -592,11 +611,14 @@ impl Scenario {
         user: &UserAccounts,
         pool: &Pool,
         kind: SwapKind,
-        a_to_b: bool,
+        dir: SwapDir,
     ) -> Instruction {
         self.ctx.program().build_ix(
             pool.swap_bundle(user),
-            amm::instruction::Swap { kind, a_to_b },
+            amm::instruction::Swap {
+                kind,
+                a_to_b: dir.a_to_b(),
+            },
         )
     }
 

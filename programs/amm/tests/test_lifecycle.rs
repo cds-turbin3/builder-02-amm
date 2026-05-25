@@ -18,7 +18,7 @@ mod common;
 
 use amm::SwapKind;
 use anchor_litesvm::TestHelpers;
-use common::{setup, Pool, Scenario, UserAccounts};
+use common::{setup, Pool, Scenario, SwapDir, UserAccounts};
 
 fn k_of(world: &Scenario, pool: &Pool) -> u128 {
     let x = world.ctx.svm.token_balance(&pool.vault_x).unwrap() as u128;
@@ -34,7 +34,7 @@ fn swap_a_to_b(world: &mut Scenario, pool: &Pool, user: &UserAccounts, amount_in
             amount_in,
             min_amount_out: 1,
         },
-        true,
+        SwapDir::AtoB,
     );
 }
 
@@ -46,7 +46,7 @@ fn swap_b_to_a(world: &mut Scenario, pool: &Pool, user: &UserAccounts, amount_in
             amount_in,
             min_amount_out: 1,
         },
-        false,
+        SwapDir::BtoA,
     );
 }
 
