@@ -123,12 +123,18 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         amm::instruction::SetLocked { locked: true },
     );
 
+    // The atomic-bundle attack needs `send_instructions` (multi-ix tx),
+    // which lives on the bare LiteSVM trait and doesn't auto-stash the
+    // context's alias table. Attach it explicitly so the structured tree
+    // still renders with friendly names.
+    let aliases = world.ctx.aliases.clone();
     world
         .ctx
         .svm
         .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin.signer])
         .unwrap()
-        .print_logs_structured(&world.aliases)
+        .with_aliases(aliases)
+        .print_logs_structured()
         .assert_success();
 
     // ----- Step 4: the attack worked -----
