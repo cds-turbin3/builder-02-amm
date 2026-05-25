@@ -20,7 +20,7 @@
 
 mod common;
 
-use anchor_litesvm::{TestHelpers, TransactionHelpers};
+use anchor_litesvm::TestHelpers;
 use common::setup;
 
 /// MINIMUM_LIQUIDITY = 1000. With (1, 1), sqrt(1) = 1 <= 1000. With
@@ -34,21 +34,9 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
     {
         let mut world = setup();
         let (_admin, pool) = world.fresh_pool(30);
-        let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
+        let alice = world.user("Alice", 1_000_000, 1_000_000);
 
-        let ix = world.ctx.program().build_ix(
-            pool.add_liquidity_bundle(&alice),
-            amm::instruction::AddLiquidity {
-                amount_a: 1,
-                amount_b: 1,
-                min_lp_tokens: 0,
-            },
-        );
-        world
-            .ctx
-            .svm
-            .send_err(ix, &[&alice.signer], &world.aliases)
-            .print_logs_structured(&world.aliases);
+        world.deposit_expecting(&alice, &pool, 1, 1, 0, "InsufficientLiquidity");
 
         // Alice's tokens never moved.
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
@@ -63,21 +51,9 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
     {
         let mut world = setup();
         let (_admin, pool) = world.fresh_pool(30);
-        let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
+        let alice = world.user("Alice", 1_000_000, 1_000_000);
 
-        let ix = world.ctx.program().build_ix(
-            pool.add_liquidity_bundle(&alice),
-            amm::instruction::AddLiquidity {
-                amount_a: 1_000,
-                amount_b: 1_000,
-                min_lp_tokens: 0,
-            },
-        );
-        world
-            .ctx
-            .svm
-            .send_err(ix, &[&alice.signer], &world.aliases)
-            .print_logs_structured(&world.aliases);
+        world.deposit_expecting(&alice, &pool, 1_000, 1_000, 0, "InsufficientLiquidity");
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_y), Some(1_000_000));
     }
@@ -92,21 +68,9 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
 fn minimal_viable_first_deposit_succeeds_just_above_threshold() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 10_000);
+    let alice = world.user("Alice", 10_000, 10_000);
 
-    let ix = world.ctx.program().build_ix(
-        pool.add_liquidity_bundle(&alice),
-        amm::instruction::AddLiquidity {
-            amount_a: 1_001,
-            amount_b: 1_001,
-            min_lp_tokens: 1,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&alice.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    world.deposit(&alice, &pool, 1_001, 1_001, 1);
 
     assert_eq!(
         world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
@@ -144,27 +108,18 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     let (_admin, pool) = world.fresh_pool(30);
 
     // Step 1: Mallory opens the pool minimally.
-    let mallory = world.make_user("Mallory", 10_000_000_000, 2_000_000, 10_000);
-    world.deposit(&pool, &mallory, 1_001, 1_001, 1);
+    let mallory = world.user("Mallory", 2_000_000, 10_000);
+    world.deposit(&mallory, &pool, 1_001, 1_001, 1);
 
     // Step 2: Mallory inflates vault_x by 1_000_000 via direct SPL deposit.
     // Vaults go from (1_001, 1_001) to (1_001_001, 1_001); LP supply stays
     // at 1_001 (= mallory's 1 + lp_vault's 1_000).
-    world
-        .ctx
-        .svm
-        .mint_to(
-            &world.mint_x,
-            &pool.vault_x,
-            &world.mint_authority,
-            1_000_000,
-        )
-        .unwrap();
+    world.mint_to_vault_x(&pool, 1_000_000);
     assert_eq!(world.ctx.svm.token_balance(&pool.vault_x), Some(1_001_001));
     assert_eq!(world.ctx.svm.token_balance(&pool.vault_y), Some(1_001));
 
     // Step 3: Honest Henry attempts a "normal" deposit.
-    let henry = world.make_user("Henry", 10_000_000_000, 1_000_000, 1_000_000);
+    let henry = world.user("Henry", 1_000_000, 1_000_000);
     let henry_x_before = world.ctx.svm.token_balance(&henry.ata_x);
     let henry_y_before = world.ctx.svm.token_balance(&henry.ata_y);
     // Capture lamports too: state rolls back on failure, but tx fees do not.
@@ -172,19 +127,7 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     // failed attempt.
     let henry_lamports_before = world.ctx.svm.get_balance(&henry.pubkey()).unwrap();
 
-    let ix = world.ctx.program().build_ix(
-        pool.add_liquidity_bundle(&henry),
-        amm::instruction::AddLiquidity {
-            amount_a: 1_000,
-            amount_b: 1_000,
-            min_lp_tokens: 0,
-        },
-    );
-    let r = world
-        .ctx
-        .svm
-        .send_err(ix, &[&henry.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    let r = world.deposit_expecting(&henry, &pool, 1_000, 1_000, 0, "InsufficientLiquidity");
 
     // Token state rolls back: Henry's X/Y balances are exactly what they were.
     assert_eq!(world.ctx.svm.token_balance(&henry.ata_x), henry_x_before);

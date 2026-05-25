@@ -21,99 +21,76 @@
 //! See `docs/security/issues/001-lock-unlock-timing-attack.md` for the
 //! full writeup and `docs/security/responses/001-lock-unlock-timing-attack.md`
 //! for the chosen mitigation.
+//!
+//! Cast: three actors with distinct narrative roles. `admin` is the
+//! pool authority *and* one of the traders (this is the bug); `alice`
+//! is the LP whose position the lock is supposed to protect; `bob` is
+//! the honest trader who's blocked while the admin trades through the
+//! lock. Because `fresh_pool` now hands back the admin as a
+//! `UserAccounts` with ATAs already in place, the admin's promotion to
+//! a trader is one call to `mint_to_x`; the original test paid for the
+//! same thing with ~10 lines of manual ATA setup.
 
 #![cfg(feature = "test-helpers")]
 
 mod common;
 
-use amm::{SetLockedBundle, SwapBundle, SwapKind};
-use anchor_litesvm::{Signer, TestHelpers, TransactionHelpers};
+use amm::{SwapBundle, SwapKind};
+use anchor_litesvm::{TestHelpers, TransactionHelpers};
 use common::setup;
 
 #[test]
 fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     let mut world = setup();
-    println!("\n1. Create a Pool");
     let (admin, pool) = world.fresh_pool(30);
 
     // Alice provides liquidity. The reserves she puts in are the pool's
     // working state; she's the user whose position is supposed to be
     // protected by the "locked" signal.
-    let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
-    println!("\n2. Initialize with tokens");
-    world.deposit(&pool, &alice, 1_000_000, 1_000_000, 1);
+    let alice = world.user("Alice", 1_000_000, 1_000_000);
+    world.deposit(&alice, &pool, 1_000_000, 1_000_000, 1);
 
-    // The authority is also a trader here. We give them an X balance so
-    // they have something to swap; the y ATA exists empty so the SPL
-    // transfer in the swap-out leg has somewhere to land.
-    let admin_ata_x = world
-        .ctx
-        .svm
-        .create_associated_token_account(&world.mint_x, &admin)
-        .unwrap();
-    let admin_ata_y = world
-        .ctx
-        .svm
-        .create_associated_token_account(&world.mint_y, &admin)
-        .unwrap();
-    world
-        .ctx
-        .svm
-        .mint_to(&world.mint_x, &admin_ata_x, &world.mint_authority, 200_000)
-        .unwrap();
+    // Promote `admin` from authority-only to trader: give them X to
+    // swap. ATAs were created by `fresh_pool` (every actor minted via
+    // `cast`/`user`/`fresh_pool` has them by default), so this is just
+    // a balance top-up.
+    world.mint_to_x(&admin, 200_000);
 
     // Bob is an honest trader, here to play the role of "user the lock is
     // supposed to protect."
-    let bob = world.make_user("Bob", 10_000_000_000, 100_000, 0);
+    let bob = world.user("Bob", 100_000, 0);
 
     // ----- Step 1: authority locks the pool -----
-    let lock_ix = world.ctx.program().build_ix(
-        SetLockedBundle {
-            authority: admin.pubkey(),
-            config: pool.config,
-        },
-        amm::instruction::SetLocked { locked: true },
-    );
-    println!("\n3. Mystery .. Admin likely locks pool");
-    world
-        .ctx
-        .svm
-        .send_ok(lock_ix, &[&admin], &world.aliases)
-        .tap(|_| println!("Current style logs"))
-        .print_logs()
-        .tap(|_| println!("----"))
-        .print_logs_structured(&world.aliases);
+    world.set_locked(&admin, &pool, true);
 
     // ----- Step 2: bob tries to swap, rejected with PoolLocked -----
-    let bob_swap = world.ctx.program().build_ix(
-        pool.swap_bundle(&bob),
-        amm::instruction::Swap {
-            kind: SwapKind::ExactInput {
-                amount_in: 10_000,
-                min_amount_out: 1,
-            },
-            a_to_b: true,
+    world.swap_expecting(
+        &bob,
+        &pool,
+        SwapKind::ExactInput {
+            amount_in: 10_000,
+            min_amount_out: 1,
         },
+        true,
+        "PoolLocked",
     );
-    println!("\n4. Bob tries a swap, is denied");
-    world
-        .ctx
-        .svm
-        .send_err(bob_swap, &[&bob.signer], &world.aliases)
-        .tap(|_| println!("Current style logs"))
-        .print_logs()
-        .tap(|_| println!("----"))
-        .print_logs_structured(&world.aliases);
 
     // Capture state before the attack tx.
-    let admin_x_before = world.ctx.svm.token_balance(&admin_ata_x).unwrap();
-    let admin_y_before = world.ctx.svm.token_balance(&admin_ata_y).unwrap();
+    let admin_x_before = world.ctx.svm.token_balance(&admin.ata_x).unwrap();
+    let admin_y_before = world.ctx.svm.token_balance(&admin.ata_y).unwrap();
     let vault_x_before = world.ctx.svm.token_balance(&pool.vault_x).unwrap();
     let vault_y_before = world.ctx.svm.token_balance(&pool.vault_y).unwrap();
 
     // ----- Step 3: authority's atomic unlock + swap + relock -----
+    //
+    // This three-instruction bundle is the attack: the verbs on
+    // `Scenario` send one instruction per tx, but the bug being
+    // demonstrated relies on packing all three into a single atomic
+    // transaction. So this step drops to the lower-level
+    // `program().build_ix(...)` + `send_instructions` API on purpose;
+    // the verbs cover the happy path, not "do three things atomically".
     let unlock_ix = world.ctx.program().build_ix(
-        SetLockedBundle {
+        amm::SetLockedBundle {
             authority: admin.pubkey(),
             config: pool.config,
         },
@@ -127,8 +104,8 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             config: pool.config,
             vault_x: pool.vault_x,
             vault_y: pool.vault_y,
-            user_x: admin_ata_x,
-            user_y: admin_ata_y,
+            user_x: admin.ata_x,
+            user_y: admin.ata_y,
         },
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
@@ -139,29 +116,25 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         },
     );
     let relock_ix = world.ctx.program().build_ix(
-        SetLockedBundle {
+        amm::SetLockedBundle {
             authority: admin.pubkey(),
             config: pool.config,
         },
         amm::instruction::SetLocked { locked: true },
     );
 
-    println!("\n5. Admin sandwiches a swap between an unlock and lock tx");
     world
         .ctx
         .svm
-        .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin])
+        .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin.signer])
         .unwrap()
-        .tap(|_| println!("Current style logs"))
-        .print_logs()
-        .tap(|_| println!("----"))
         .print_logs_structured(&world.aliases)
         .assert_success();
 
     // ----- Step 4: the attack worked -----
     // Admin spent X, received Y at the locked-pool ratio.
-    let admin_x_after = world.ctx.svm.token_balance(&admin_ata_x).unwrap();
-    let admin_y_after = world.ctx.svm.token_balance(&admin_ata_y).unwrap();
+    let admin_x_after = world.ctx.svm.token_balance(&admin.ata_x).unwrap();
+    let admin_y_after = world.ctx.svm.token_balance(&admin.ata_y).unwrap();
     assert_eq!(
         admin_x_after,
         admin_x_before - 100_000,
@@ -186,23 +159,14 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     // byte-identical and litesvm doesn't reject with `AlreadyProcessed`
     // (same data + same blockhash = same signature, deduped). We want to
     // actually hit the handler and confirm the PoolLocked failure path.
-    let bob_swap_again = world.ctx.program().build_ix(
-        pool.swap_bundle(&bob),
-        amm::instruction::Swap {
-            kind: SwapKind::ExactInput {
-                amount_in: 5_000,
-                min_amount_out: 1,
-            },
-            a_to_b: true,
+    world.swap_expecting(
+        &bob,
+        &pool,
+        SwapKind::ExactInput {
+            amount_in: 5_000,
+            min_amount_out: 1,
         },
+        true,
+        "PoolLocked",
     );
-    println!("\n6. Poor Bob is still locked out");
-    world
-        .ctx
-        .svm
-        .send_err_named(bob_swap_again, &[&bob.signer], &world.aliases, "PoolLocked")
-        .tap(|_| println!("Current style logs"))
-        .print_logs()
-        .tap(|_| println!("----"))
-        .print_logs_structured(&world.aliases);
 }

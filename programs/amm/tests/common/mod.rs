@@ -1,26 +1,52 @@
-//! Shared fixtures for amm integration tests.
+//! Shared scaffolding for the amm program's integration tests.
 //!
-//! The shape follows the bundle-as-actors framing (see `feedback_bundles_as_actors`):
-//! a [`Pool`] fixture carries the PDAs / ATAs that *characterize a pool*
-//! (program-derived state shared by every instruction), while per-test actor
-//! keypairs and their user-side ATAs are constructed inline in each test to
-//! keep the scenario narrative legible.
+//! Built around the actors-as-first-class-citizens pattern: a [`Scenario`]
+//! owns the SVM context, the two mints, the mint authority, and the
+//! structured-log alias table. [`UserAccounts`] is the actor type
+//! (signer + label + the two token ATAs); a [`Pool`] fixture carries the
+//! PDAs and vault ATAs that characterize a pool. Verbs on `Scenario`
+//! (`cast`, `user`, `fresh_pool`, `deposit`, `swap`, `remove_liquidity`,
+//! `set_locked`, `update_fee`, `update_authority`) take typed actors and
+//! register every derived account in the alias table as a side-effect of
+//! running, so the structured log output stays narrative without per-test
+//! alias plumbing.
+//!
+//! Each verb has an `_expecting(..., error)` companion for negative-path
+//! tests. The error string is matched as a substring against both the
+//! transaction logs and the error field (same matcher `send_err_named`
+//! uses), so one signature accepts Anchor error names like `"PoolLocked"`
+//! and System messages like `"already in use"`.
+//!
+//! See `docs/testing/actors-as-first-class-citizens.md` for the
+//! methodology and a worked example.
 
+// Each integration-test binary compiles `common` as its own module and
+// runs the dead-code lint against just the items *that binary* uses. A
+// verb used in `test_swap.rs` but not in `test_initialize.rs` shows up
+// as dead from the latter's perspective. The blanket allow is the
+// conventional handling for shared test scaffolding.
 #![cfg(feature = "test-helpers")]
 #![allow(dead_code)]
 
 use amm::{
     AddLiquidityBundle, InitializeBundle, RemoveLiquidityBundle, SetLockedBundle, SwapBundle,
-    CONFIG_SEED, LP_MINT_SEED,
+    SwapKind, UpdateAuthorityBundle, UpdateFeeBundle, CONFIG_SEED, LP_MINT_SEED,
 };
 use anchor_litesvm::{
-    Aliases, AnchorContext, AnchorLiteSVM, Keypair, Pubkey, Signer, TestHelpers, TransactionHelpers,
+    Aliases, AnchorContext, AnchorLiteSVM, Instruction, Keypair, Pubkey, Signer, TestHelpers,
+    TransactionHelpers, TransactionResult,
 };
 use anchor_spl::associated_token::get_associated_token_address;
 
 /// Compiled program bytes. Tests assume `cargo build-sbf -p amm` ran first;
 /// the justfile / pre-commit wraps that.
 const AMM_BYTES: &[u8] = include_bytes!("../../../../target/deploy/amm.so");
+
+/// Default SOL allocation when minting an actor. Most tests don't care
+/// about the exact amount; this is "enough to pay rent and fees for any
+/// reasonable scenario". Override via [`Scenario::cast_with_sol`] if a
+/// scenario deliberately probes the lamports-side.
+pub const DEFAULT_SOL: u64 = 10_000_000_000;
 
 /// All the pool-shared addresses a fixture needs, derived once from
 /// `(program_id, seed, mint_x, mint_y)`.
@@ -103,11 +129,20 @@ impl Pool {
     }
 }
 
-/// Per-user account bundle: a funded signer plus their two token ATAs.
-/// The LP ATA is created lazily by `add_liquidity` (init_if_needed), so it's
-/// not provisioned here.
+/// A named participant in a scenario: a funded signer, the narrative
+/// label that identifies them in the structured-log trace, and their
+/// two token ATAs. The LP ATA is created lazily by `add_liquidity`
+/// (init_if_needed), so it's not provisioned here.
+///
+/// One type covers every signer-role in the suite (LPs, traders,
+/// admins, attackers). The cast analysis showed that splitting by role
+/// would force every verb to decide which input to accept; the savings
+/// are negative. Where a "role" matters narratively, the variable name
+/// and the label carry it ("alice" the LP vs "bob" the trader vs
+/// "admin" the authority); the type stays uniform.
 pub struct UserAccounts {
     pub signer: Keypair,
+    pub label: String,
     pub ata_x: Pubkey,
     pub ata_y: Pubkey,
 }
@@ -122,51 +157,74 @@ impl UserAccounts {
     }
 }
 
-/// Bootstrap a test world: program loaded, two SPL Token mints created
-/// (decimals = 6), a `mint_authority` capable of minting either.
-pub fn setup() -> Bootstrap {
-    let mut ctx = AnchorLiteSVM::build_with_program(amm::ID, AMM_BYTES);
-    let mint_authority = ctx.svm.create_funded_account(10_000_000_000).unwrap();
-    let mint_x_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
-    let mint_y_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
-    Bootstrap {
-        ctx,
-        mint_authority,
-        mint_x: mint_x_kp.pubkey(),
-        mint_y: mint_y_kp.pubkey(),
-        // Pre-seed `amm::ID` so structured logs render program frames as
-        // `amm::Swap` instead of `CYbYnHW7…2yf5::Swap`.
-        aliases: Aliases::default().with(amm::ID, "amm"),
-    }
-}
-
-pub struct Bootstrap {
+/// The stage on which actors perform: owns the `AnchorContext`, the
+/// two mints used by every test, the mint authority that can mint
+/// either, and the `Aliases` table the structured-log renderer reads.
+pub struct Scenario {
     pub ctx: AnchorContext,
     pub mint_authority: Keypair,
     pub mint_x: Pubkey,
     pub mint_y: Pubkey,
-    /// Accumulates over the test as actors and pool components are created,
-    /// so structured-log output renders pubkeys as the names the test author
-    /// reasoned about (Bob, Pool, VaultX...) instead of raw base58.
     pub aliases: Aliases,
 }
 
-impl Bootstrap {
-    /// Register `pubkey -> name` in the alias table. Later inserts shadow
-    /// earlier ones, so this also serves as a rename when an actor's role
-    /// changes mid-test (e.g. authority rotation).
-    pub fn alias(&mut self, pubkey: Pubkey, name: impl Into<String>) {
-        // `Aliases::with` is a consuming builder; mem::take lets us update
-        // the field in place without requiring a clone.
-        let aliases = std::mem::take(&mut self.aliases);
-        self.aliases = aliases.with(pubkey, name);
+/// Bootstrap a fresh `Scenario`: program loaded, two SPL Token mints
+/// (decimals = 6) created, a `mint_authority` capable of minting either.
+pub fn setup() -> Scenario {
+    let mut ctx = AnchorLiteSVM::build_with_program(amm::ID, AMM_BYTES);
+    let mint_authority = ctx.svm.create_funded_account(DEFAULT_SOL).unwrap();
+    let mint_x_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
+    let mint_y_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
+    Scenario {
+        ctx,
+        mint_authority,
+        mint_x: mint_x_kp.pubkey(),
+        mint_y: mint_y_kp.pubkey(),
+        aliases: Aliases::default()
+            .with(amm::ID, "amm")
+            .with(mint_x_kp.pubkey(), "MintX")
+            .with(mint_y_kp.pubkey(), "MintY"),
+    }
+}
+
+impl Scenario {
+    // -----------------------------------------------------------------
+    // Alias-table primitives
+    // -----------------------------------------------------------------
+
+    /// Register `pubkey -> label` in the alias table. Later inserts
+    /// shadow earlier ones, so this also serves as a rename when an
+    /// actor's role changes mid-test (e.g. authority rotation).
+    pub fn alias(&mut self, pubkey: Pubkey, label: impl Into<String>) {
+        let taken = std::mem::take(&mut self.aliases);
+        self.aliases = taken.with(pubkey, label.into());
     }
 
-    /// Create a funded user with x/y ATAs and pre-mint them token balances,
-    /// registering the signer pubkey under `name` for log readability.
-    pub fn make_user(
+    // -----------------------------------------------------------------
+    // Cast construction
+    // -----------------------------------------------------------------
+
+    /// Mint a funded actor with zero token balances. Used for cast
+    /// members who don't transact tokens directly (attackers, auth-only
+    /// admins, strangers in negative-path tests). The actor still has
+    /// ATAs created (cheap), so they can be promoted to a trader later
+    /// via [`Self::mint_to_x`] / [`Self::mint_to_y`].
+    pub fn cast(&mut self, label: &str) -> UserAccounts {
+        self.user(label, 0, 0)
+    }
+
+    /// Mint a funded actor and pre-fund their X / Y balances. The label
+    /// identifies them in every structured-log frame they sign.
+    pub fn user(&mut self, label: &str, x_balance: u64, y_balance: u64) -> UserAccounts {
+        self.user_with_sol(label, DEFAULT_SOL, x_balance, y_balance)
+    }
+
+    /// Variant of [`Self::user`] that takes an explicit SOL amount.
+    /// Used by scenarios that deliberately probe the lamports-side
+    /// (fee accounting, rent edge cases).
+    pub fn user_with_sol(
         &mut self,
-        name: &str,
+        label: &str,
         sol: u64,
         x_balance: u64,
         y_balance: u64,
@@ -194,34 +252,83 @@ impl Bootstrap {
                 .mint_to(&self.mint_y, &ata_y, &self.mint_authority, y_balance)
                 .unwrap();
         }
-        self.alias(signer.pubkey(), name);
+        self.alias(signer.pubkey(), label);
         UserAccounts {
             signer,
+            label: label.to_string(),
             ata_x,
             ata_y,
         }
     }
 
-    /// One-shot helper: derive a pool at `seed=0` and run `initialize` with
-    /// `admin` as both initializer and authority. Returns the admin keypair
-    /// (signer for future admin instructions) and the pool fixture. The
-    /// admin signer is aliased as "Admin" and the pool's PDAs / vaults are
-    /// registered too; tests that need a different admin name override via
-    /// `world.alias(admin.pubkey(), "...")`.
-    pub fn fresh_pool(&mut self, fee_bps: u16) -> (Keypair, Pool) {
-        let admin = self.ctx.svm.create_funded_account(10_000_000_000).unwrap();
+    /// Mint additional X to `user`'s ATA. Used by tests that promote a
+    /// previously-balanceless actor (typically an admin from
+    /// `fresh_pool`) into a trader for the duration of one scenario.
+    pub fn mint_to_x(&mut self, user: &UserAccounts, amount: u64) {
+        self.ctx
+            .svm
+            .mint_to(&self.mint_x, &user.ata_x, &self.mint_authority, amount)
+            .unwrap();
+    }
+
+    pub fn mint_to_y(&mut self, user: &UserAccounts, amount: u64) {
+        self.ctx
+            .svm
+            .mint_to(&self.mint_y, &user.ata_y, &self.mint_authority, amount)
+            .unwrap();
+    }
+
+    /// Mint directly into the pool's X vault, bypassing `add_liquidity`.
+    /// This is the inflation-attack helper: in production an attacker
+    /// would `Token::Transfer` from their ATA into the vault, but the
+    /// math is the same and minting is cheaper to set up in a test.
+    pub fn mint_to_vault_x(&mut self, pool: &Pool, amount: u64) {
+        self.ctx
+            .svm
+            .mint_to(&self.mint_x, &pool.vault_x, &self.mint_authority, amount)
+            .unwrap();
+    }
+
+    pub fn mint_to_vault_y(&mut self, pool: &Pool, amount: u64) {
+        self.ctx
+            .svm
+            .mint_to(&self.mint_y, &pool.vault_y, &self.mint_authority, amount)
+            .unwrap();
+    }
+
+    // -----------------------------------------------------------------
+    // Happy-path verbs
+    // -----------------------------------------------------------------
+
+    /// One-shot: mint an "Admin" actor, derive a pool at `seed=0`, run
+    /// `initialize` with the admin as both initializer and authority.
+    /// Registers all the pool's PDAs / vaults in the alias table.
+    pub fn fresh_pool(&mut self, fee_bps: u16) -> (UserAccounts, Pool) {
+        let admin = self.cast("Admin");
         let pool = Pool::derive(0, self.mint_x, self.mint_y);
-        self.alias(admin.pubkey(), "Admin");
         self.alias(pool.config, "Pool");
         self.alias(pool.mint_lp, "MintLP");
         self.alias(pool.vault_x, "VaultX");
         self.alias(pool.vault_y, "VaultY");
         self.alias(pool.lp_vault, "LpVault");
-        self.alias(self.mint_x, "MintX");
-        self.alias(self.mint_y, "MintY");
+        self.initialize(&admin, &pool, fee_bps, Some(&admin));
+        (admin, pool)
+    }
+
+    /// Lower-level `initialize`: the caller chooses the seed, fee_bps,
+    /// and authority. Used when [`Self::fresh_pool`] is too coarse
+    /// (e.g. testing the fee-boundary check). The pool fixture must be
+    /// pre-derived; the verb registers its PDAs in the alias table.
+    pub fn initialize(
+        &mut self,
+        initializer: &UserAccounts,
+        pool: &Pool,
+        fee_bps: u16,
+        authority: Option<&UserAccounts>,
+    ) {
         let ix = self.ctx.program().build_ix(
             InitializeBundle {
-                initializer: admin.pubkey(),
+                initializer: initializer.pubkey(),
                 mint_x: pool.mint_x,
                 mint_y: pool.mint_y,
                 mint_lp: pool.mint_lp,
@@ -233,65 +340,305 @@ impl Bootstrap {
             amm::instruction::Initialize {
                 seed: pool.seed,
                 fee_bps,
-                authority: Some(admin.pubkey()),
+                authority: authority.map(|a| a.pubkey()),
             },
         );
         self.ctx
             .svm
-            .send_ok(ix, &[&admin], &self.aliases)
-            .print_logs_structured(&self.aliases);
-        (admin, pool)
-    }
-
-    /// Flip `Config.locked` on the pool. Used by negative-path tests that
-    /// want to observe `PoolLocked` errors on trade-path instructions.
-    pub fn set_locked(&mut self, admin: &Keypair, pool: &Pool, locked: bool) {
-        let ix = self.ctx.program().build_ix(
-            SetLockedBundle {
-                authority: admin.pubkey(),
-                config: pool.config,
-            },
-            amm::instruction::SetLocked { locked },
-        );
-        self.ctx
-            .svm
-            .send_ok(ix, &[admin], &self.aliases)
+            .send_ok(ix, &[&initializer.signer], &self.aliases)
             .print_logs_structured(&self.aliases);
     }
 
-    /// Run `add_liquidity` on behalf of `user`. Used when a test needs an
-    /// existing-pool state set up before exercising another instruction.
     pub fn deposit(
         &mut self,
-        pool: &Pool,
         user: &UserAccounts,
+        pool: &Pool,
         amount_a: u64,
         amount_b: u64,
         min_lp_tokens: u64,
     ) {
+        let ix = self.build_deposit_ix(user, pool, amount_a, amount_b, min_lp_tokens);
+        self.ctx
+            .svm
+            .send_ok(ix, &[&user.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
+    }
+
+    pub fn remove_liquidity(
+        &mut self,
+        user: &UserAccounts,
+        pool: &Pool,
+        lp_burn: u64,
+        min_a: u64,
+        min_b: u64,
+    ) {
+        let ix = self.build_remove_liquidity_ix(user, pool, lp_burn, min_a, min_b);
+        self.ctx
+            .svm
+            .send_ok(ix, &[&user.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
+    }
+
+    pub fn swap(&mut self, user: &UserAccounts, pool: &Pool, kind: SwapKind, a_to_b: bool) {
+        let ix = self.build_swap_ix(user, pool, kind, a_to_b);
+        self.ctx
+            .svm
+            .send_ok(ix, &[&user.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
+    }
+
+    pub fn set_locked(&mut self, admin: &UserAccounts, pool: &Pool, locked: bool) {
+        let ix = self.build_set_locked_ix(admin, pool, locked);
+        self.ctx
+            .svm
+            .send_ok(ix, &[&admin.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
+    }
+
+    pub fn update_fee(&mut self, admin: &UserAccounts, pool: &Pool, new_fee_bps: u16) {
+        let ix = self.build_update_fee_ix(admin, pool, new_fee_bps);
+        self.ctx
+            .svm
+            .send_ok(ix, &[&admin.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
+    }
+
+    /// Run `update_authority`. Pass `Some(&new_admin)` to rotate or
+    /// `None` to renounce.
+    pub fn update_authority(
+        &mut self,
+        admin: &UserAccounts,
+        pool: &Pool,
+        new_authority: Option<&UserAccounts>,
+    ) {
+        let ix = self.build_update_authority_ix(admin, pool, new_authority);
+        self.ctx
+            .svm
+            .send_ok(ix, &[&admin.signer], &self.aliases)
+            .print_logs_structured(&self.aliases);
+    }
+
+    // -----------------------------------------------------------------
+    // Negative-path verbs
+    // -----------------------------------------------------------------
+    //
+    // Each takes the same parameters as its happy-path companion plus
+    // an `error` substring. The matcher checks both transaction logs
+    // and the error field, so it accepts Anchor names (`"PoolLocked"`,
+    // `"SlippageExceeded"`) and System messages with one signature.
+
+    pub fn initialize_expecting(
+        &mut self,
+        initializer: &UserAccounts,
+        pool: &Pool,
+        fee_bps: u16,
+        authority: Option<&UserAccounts>,
+        error: &str,
+    ) -> TransactionResult {
         let ix = self.ctx.program().build_ix(
-            AddLiquidityBundle {
-                user: user.pubkey(),
+            InitializeBundle {
+                initializer: initializer.pubkey(),
                 mint_x: pool.mint_x,
                 mint_y: pool.mint_y,
-                config: pool.config,
                 mint_lp: pool.mint_lp,
                 vault_x: pool.vault_x,
                 vault_y: pool.vault_y,
                 lp_vault: pool.lp_vault,
-                user_x: user.ata_x,
-                user_y: user.ata_y,
-                user_lp: user.ata_lp(&pool.mint_lp),
+                config: pool.config,
             },
+            amm::instruction::Initialize {
+                seed: pool.seed,
+                fee_bps,
+                authority: authority.map(|a| a.pubkey()),
+            },
+        );
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&initializer.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    pub fn deposit_expecting(
+        &mut self,
+        user: &UserAccounts,
+        pool: &Pool,
+        amount_a: u64,
+        amount_b: u64,
+        min_lp_tokens: u64,
+        error: &str,
+    ) -> TransactionResult {
+        let ix = self.build_deposit_ix(user, pool, amount_a, amount_b, min_lp_tokens);
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&user.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    pub fn remove_liquidity_expecting(
+        &mut self,
+        user: &UserAccounts,
+        pool: &Pool,
+        lp_burn: u64,
+        min_a: u64,
+        min_b: u64,
+        error: &str,
+    ) -> TransactionResult {
+        let ix = self.build_remove_liquidity_ix(user, pool, lp_burn, min_a, min_b);
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&user.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    pub fn swap_expecting(
+        &mut self,
+        user: &UserAccounts,
+        pool: &Pool,
+        kind: SwapKind,
+        a_to_b: bool,
+        error: &str,
+    ) -> TransactionResult {
+        let ix = self.build_swap_ix(user, pool, kind, a_to_b);
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&user.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    pub fn set_locked_expecting(
+        &mut self,
+        admin: &UserAccounts,
+        pool: &Pool,
+        locked: bool,
+        error: &str,
+    ) -> TransactionResult {
+        let ix = self.build_set_locked_ix(admin, pool, locked);
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&admin.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    pub fn update_fee_expecting(
+        &mut self,
+        admin: &UserAccounts,
+        pool: &Pool,
+        new_fee_bps: u16,
+        error: &str,
+    ) -> TransactionResult {
+        let ix = self.build_update_fee_ix(admin, pool, new_fee_bps);
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&admin.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    pub fn update_authority_expecting(
+        &mut self,
+        admin: &UserAccounts,
+        pool: &Pool,
+        new_authority: Option<&UserAccounts>,
+        error: &str,
+    ) -> TransactionResult {
+        let ix = self.build_update_authority_ix(admin, pool, new_authority);
+        self.ctx
+            .svm
+            .send_err_named(ix, &[&admin.signer], &self.aliases, error)
+            .print_logs_structured(&self.aliases)
+    }
+
+    // -----------------------------------------------------------------
+    // Instruction builders (private; shared by happy and negative verbs)
+    // -----------------------------------------------------------------
+
+    fn build_deposit_ix(
+        &self,
+        user: &UserAccounts,
+        pool: &Pool,
+        amount_a: u64,
+        amount_b: u64,
+        min_lp_tokens: u64,
+    ) -> Instruction {
+        self.ctx.program().build_ix(
+            pool.add_liquidity_bundle(user),
             amm::instruction::AddLiquidity {
                 amount_a,
                 amount_b,
                 min_lp_tokens,
             },
-        );
-        self.ctx
-            .svm
-            .send_ok(ix, &[&user.signer], &self.aliases)
-            .print_logs_structured(&self.aliases);
+        )
+    }
+
+    fn build_remove_liquidity_ix(
+        &self,
+        user: &UserAccounts,
+        pool: &Pool,
+        lp_burn: u64,
+        min_a: u64,
+        min_b: u64,
+    ) -> Instruction {
+        self.ctx.program().build_ix(
+            pool.remove_liquidity_bundle(user),
+            amm::instruction::RemoveLiquidity {
+                lp_burn,
+                min_a,
+                min_b,
+            },
+        )
+    }
+
+    fn build_swap_ix(
+        &self,
+        user: &UserAccounts,
+        pool: &Pool,
+        kind: SwapKind,
+        a_to_b: bool,
+    ) -> Instruction {
+        self.ctx.program().build_ix(
+            pool.swap_bundle(user),
+            amm::instruction::Swap { kind, a_to_b },
+        )
+    }
+
+    fn build_set_locked_ix(&self, admin: &UserAccounts, pool: &Pool, locked: bool) -> Instruction {
+        self.ctx.program().build_ix(
+            SetLockedBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::SetLocked { locked },
+        )
+    }
+
+    fn build_update_fee_ix(
+        &self,
+        admin: &UserAccounts,
+        pool: &Pool,
+        new_fee_bps: u16,
+    ) -> Instruction {
+        self.ctx.program().build_ix(
+            UpdateFeeBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateFee { new_fee_bps },
+        )
+    }
+
+    fn build_update_authority_ix(
+        &self,
+        admin: &UserAccounts,
+        pool: &Pool,
+        new_authority: Option<&UserAccounts>,
+    ) -> Instruction {
+        self.ctx.program().build_ix(
+            UpdateAuthorityBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateAuthority {
+                new_authority: new_authority.map(|a| a.pubkey()),
+            },
+        )
     }
 }

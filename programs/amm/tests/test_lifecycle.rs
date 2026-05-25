@@ -17,52 +17,40 @@
 mod common;
 
 use amm::SwapKind;
-use anchor_litesvm::{TestHelpers, TransactionHelpers};
-use common::{setup, Pool, UserAccounts};
+use anchor_litesvm::TestHelpers;
+use common::{setup, Pool, Scenario, UserAccounts};
 
-fn k_of(world: &common::Bootstrap, pool: &Pool) -> u128 {
+fn k_of(world: &Scenario, pool: &Pool) -> u128 {
     let x = world.ctx.svm.token_balance(&pool.vault_x).unwrap() as u128;
     let y = world.ctx.svm.token_balance(&pool.vault_y).unwrap() as u128;
     x * y
 }
 
-fn swap_a_to_b(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts, amount_in: u64) {
-    let ix = world.ctx.program().build_ix(
-        pool.swap_bundle(user),
-        amm::instruction::Swap {
-            kind: SwapKind::ExactInput {
-                amount_in,
-                min_amount_out: 1,
-            },
-            a_to_b: true,
+fn swap_a_to_b(world: &mut Scenario, pool: &Pool, user: &UserAccounts, amount_in: u64) {
+    world.swap(
+        user,
+        pool,
+        SwapKind::ExactInput {
+            amount_in,
+            min_amount_out: 1,
         },
+        true,
     );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&user.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
 }
 
-fn swap_b_to_a(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts, amount_in: u64) {
-    let ix = world.ctx.program().build_ix(
-        pool.swap_bundle(user),
-        amm::instruction::Swap {
-            kind: SwapKind::ExactInput {
-                amount_in,
-                min_amount_out: 1,
-            },
-            a_to_b: false,
+fn swap_b_to_a(world: &mut Scenario, pool: &Pool, user: &UserAccounts, amount_in: u64) {
+    world.swap(
+        user,
+        pool,
+        SwapKind::ExactInput {
+            amount_in,
+            min_amount_out: 1,
         },
+        false,
     );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&user.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
 }
 
-fn withdraw_all(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts) {
+fn withdraw_all(world: &mut Scenario, pool: &Pool, user: &UserAccounts) {
     let lp = world
         .ctx
         .svm
@@ -71,41 +59,29 @@ fn withdraw_all(world: &mut common::Bootstrap, pool: &Pool, user: &UserAccounts)
     if lp == 0 {
         return;
     }
-    let ix = world.ctx.program().build_ix(
-        pool.remove_liquidity_bundle(user),
-        amm::instruction::RemoveLiquidity {
-            lp_burn: lp,
-            min_a: 0,
-            min_b: 0,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&user.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    world.remove_liquidity(user, pool, lp, 0, 0);
 }
 
 /// Full lifecycle: two LPs deposit, two traders swap in both directions,
 /// then both LPs withdraw. At each step, the sum of (user balances +
 /// vault balances) for each mint must equal the cumulative amount minted
-/// to users via `make_user`. No instruction should create or destroy tokens.
+/// to users via `user`. No instruction should create or destroy tokens.
 #[test]
 fn lifecycle_conserves_tokens_across_users_and_vaults() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    // Two LPs and two traders. Total minted to users via make_user:
+    // Two LPs and two traders. Total minted to users via `user`:
     //   X = 10_000 (alice) + 5_000 (bob_lp) + 2_000 (carol) + 1_000 (dan) = 18_000
     //   Y = 40_000 (alice) + 20_000 (bob_lp) + 1_000 (carol) + 2_000 (dan) = 63_000
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    let bob_lp = world.make_user("BobLP", 10_000_000_000, 5_000, 20_000);
-    let carol = world.make_user("Carol", 10_000_000_000, 2_000, 1_000);
-    let dan = world.make_user("Dan", 10_000_000_000, 1_000, 2_000);
+    let alice = world.user("Alice", 10_000, 40_000);
+    let bob_lp = world.user("BobLP", 5_000, 20_000);
+    let carol = world.user("Carol", 2_000, 1_000);
+    let dan = world.user("Dan", 1_000, 2_000);
     let total_x_minted: u64 = 18_000;
     let total_y_minted: u64 = 63_000;
 
-    let assert_conservation = |world: &common::Bootstrap, label: &str| {
+    let assert_conservation = |world: &Scenario, label: &str| {
         let bal = |ata| world.ctx.svm.token_balance(ata).unwrap_or(0);
         let users_x = bal(&alice.ata_x) + bal(&bob_lp.ata_x) + bal(&carol.ata_x) + bal(&dan.ata_x);
         let users_y = bal(&alice.ata_y) + bal(&bob_lp.ata_y) + bal(&carol.ata_y) + bal(&dan.ata_y);
@@ -127,13 +103,13 @@ fn lifecycle_conserves_tokens_across_users_and_vaults() {
 
     assert_conservation(&world, "before any instruction");
 
-    world.deposit(&pool, &alice, 1_000, 4_000, 1);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1);
     assert_conservation(&world, "after alice's deposit");
 
     swap_a_to_b(&mut world, &pool, &carol, 100);
     assert_conservation(&world, "after carol swaps X->Y");
 
-    world.deposit(&pool, &bob_lp, 500, 2_000, 1);
+    world.deposit(&bob_lp, &pool, 500, 2_000, 1);
     assert_conservation(&world, "after bob_lp's deposit");
 
     swap_b_to_a(&mut world, &pool, &dan, 200);
@@ -163,8 +139,8 @@ fn fees_accrue_to_lp_via_k_growth() {
     // Alice provides liquidity at a 1:4 ratio. After this:
     //   vaults = (1_000, 4_000); k_initial = 4_000_000
     //   alice has 1_000 LP; lp_vault has 1_000 LP; supply = 2_000
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    world.deposit(&pool, &alice, 1_000, 4_000, 1);
+    let alice = world.user("Alice", 10_000, 40_000);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1);
 
     let k_after_deposit = k_of(&world, &pool);
     assert_eq!(k_after_deposit, 4_000_000);
@@ -172,7 +148,7 @@ fn fees_accrue_to_lp_via_k_growth() {
     // Several traders swap in both directions, generating fees. Vary the
     // amounts each iteration so the resulting txs have distinct signatures
     // (identical-tx replays would be rejected as AlreadyProcessed).
-    let trader = world.make_user("Trader", 10_000_000_000, 5_000, 20_000);
+    let trader = world.user("Trader", 5_000, 20_000);
     for i in 0..5 {
         swap_a_to_b(&mut world, &pool, &trader, 50 + i);
         swap_b_to_a(&mut world, &pool, &trader, 200 + i);

@@ -1,35 +1,27 @@
 //! `add_liquidity` happy paths: the first-deposit branch (initial_liquidity,
 //! locks MINIMUM_LIQUIDITY into lp_vault) and the subsequent-deposit branch
 //! (floor-min formula, no lock-vault mint).
+//!
+//! Cast: a single user (`alice` or `bob`) doing the deposit; `admin`
+//! returned by `fresh_pool` only matters when the test exercises the
+//! locked-pool case.
 
 #![cfg(feature = "test-helpers")]
 
 mod common;
 
-use anchor_litesvm::{TestHelpers, TransactionHelpers};
+use anchor_litesvm::TestHelpers;
 use common::setup;
 
 #[test]
 fn first_deposit_mints_to_user_and_locks_minimum_liquidity() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
+    let alice = world.user("Alice", 10_000, 40_000);
 
     // (a, b) = (1_000, 4_000) -> sqrt(4_000_000) = 2_000 total LP minted.
     // User receives 2_000 - MINIMUM_LIQUIDITY = 1_000; lp_vault gets 1_000.
-    let ix = world.ctx.program().build_ix(
-        pool.add_liquidity_bundle(&alice),
-        amm::instruction::AddLiquidity {
-            amount_a: 1_000,
-            amount_b: 4_000,
-            min_lp_tokens: 1_000,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&alice.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
 
     // Alice received 1_000 LP, lp_vault holds the locked 1_000.
     assert_eq!(
@@ -59,27 +51,15 @@ fn subsequent_deposit_uses_floor_min_formula() {
 
     // Alice opens the pool with (1_000, 4_000). After this, supply = 2_000
     // (1_000 user + 1_000 lp_vault); vaults = (1_000, 4_000).
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
+    let alice = world.user("Alice", 10_000, 40_000);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
 
     // Bob deposits (500, 2_000), which is ratio-correct (1:4).
     // lp_from_a = floor(500 * 2000 / 1000) = 1_000
     // lp_from_b = floor(2000 * 2000 / 4000) = 1_000
     // min = 1_000 -> bob gets 1_000 LP.
-    let bob = world.make_user("Bob", 10_000_000_000, 5_000, 20_000);
-    let ix = world.ctx.program().build_ix(
-        pool.add_liquidity_bundle(&bob),
-        amm::instruction::AddLiquidity {
-            amount_a: 500,
-            amount_b: 2_000,
-            min_lp_tokens: 1_000,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&bob.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    let bob = world.user("Bob", 5_000, 20_000);
+    world.deposit(&bob, &pool, 500, 2_000, 1_000);
 
     // Bob received 1_000 LP. Alice's LP is unchanged (no dilution).
     assert_eq!(
@@ -115,20 +95,8 @@ fn add_liquidity_rejects_when_lp_below_min() {
     // For (1_000, 4_000), the initial-liquidity math mints
     // sqrt(4_000_000) - MINIMUM_LIQUIDITY = 1_000 to the user. Asking for
     // 1_001 must reject.
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    let ix = world.ctx.program().build_ix(
-        pool.add_liquidity_bundle(&alice),
-        amm::instruction::AddLiquidity {
-            amount_a: 1_000,
-            amount_b: 4_000,
-            min_lp_tokens: 1_001,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_err_named(ix, &[&alice.signer], &world.aliases, "SlippageExceeded")
-        .print_logs_structured(&world.aliases);
+    let alice = world.user("Alice", 10_000, 40_000);
+    world.deposit_expecting(&alice, &pool, 1_000, 4_000, 1_001, "SlippageExceeded");
 
     // Alice's tokens unmoved; vaults still empty.
     assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(10_000));
@@ -143,20 +111,8 @@ fn add_liquidity_rejects_when_pool_locked() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
 
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
+    let alice = world.user("Alice", 10_000, 40_000);
     world.set_locked(&admin, &pool, true);
 
-    let ix = world.ctx.program().build_ix(
-        pool.add_liquidity_bundle(&alice),
-        amm::instruction::AddLiquidity {
-            amount_a: 1_000,
-            amount_b: 4_000,
-            min_lp_tokens: 0,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_err_named(ix, &[&alice.signer], &world.aliases, "PoolLocked")
-        .print_logs_structured(&world.aliases);
+    world.deposit_expecting(&alice, &pool, 1_000, 4_000, 0, "PoolLocked");
 }

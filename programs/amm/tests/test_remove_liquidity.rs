@@ -6,7 +6,7 @@
 
 mod common;
 
-use anchor_litesvm::{TestHelpers, TransactionHelpers};
+use anchor_litesvm::TestHelpers;
 use common::setup;
 
 #[test]
@@ -14,27 +14,15 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
+    let alice = world.user("Alice", 10_000, 40_000);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
     // Post-deposit state: vaults (1_000, 4_000), alice LP = 1_000,
     // lp_vault LP = 1_000, total supply = 2_000.
 
     // Burn 500 LP. By floor-on-both-sides:
     //   amount_a = floor(500 * 1_000 / 2_000) = 250
     //   amount_b = floor(500 * 4_000 / 2_000) = 1_000
-    let ix = world.ctx.program().build_ix(
-        pool.remove_liquidity_bundle(&alice),
-        amm::instruction::RemoveLiquidity {
-            lp_burn: 500,
-            min_a: 250,
-            min_b: 1_000,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_ok(ix, &[&alice.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
+    world.remove_liquidity(&alice, &pool, 500, 250, 1_000);
 
     // Alice burned 500 LP, received 250 X + 1_000 Y.
     assert_eq!(
@@ -67,23 +55,11 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
 fn remove_liquidity_rejects_when_amount_below_min() {
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
+    let alice = world.user("Alice", 10_000, 40_000);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
 
     // Burning 500 LP returns (250, 1_000). Demanding min_a = 300 must reject.
-    let ix = world.ctx.program().build_ix(
-        pool.remove_liquidity_bundle(&alice),
-        amm::instruction::RemoveLiquidity {
-            lp_burn: 500,
-            min_a: 300,
-            min_b: 1_000,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_err_named(ix, &[&alice.signer], &world.aliases, "SlippageExceeded")
-        .print_logs_structured(&world.aliases);
+    world.remove_liquidity_expecting(&alice, &pool, 500, 300, 1_000, "SlippageExceeded");
 
     // Alice's LP unchanged; vaults unchanged.
     assert_eq!(
@@ -98,21 +74,9 @@ fn remove_liquidity_rejects_when_amount_below_min() {
 fn remove_liquidity_rejects_when_pool_locked() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
-    let alice = world.make_user("Alice", 10_000_000_000, 10_000, 40_000);
-    world.deposit(&pool, &alice, 1_000, 4_000, 1_000);
+    let alice = world.user("Alice", 10_000, 40_000);
+    world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
     world.set_locked(&admin, &pool, true);
 
-    let ix = world.ctx.program().build_ix(
-        pool.remove_liquidity_bundle(&alice),
-        amm::instruction::RemoveLiquidity {
-            lp_burn: 500,
-            min_a: 0,
-            min_b: 0,
-        },
-    );
-    world
-        .ctx
-        .svm
-        .send_err_named(ix, &[&alice.signer], &world.aliases, "PoolLocked")
-        .print_logs_structured(&world.aliases);
+    world.remove_liquidity_expecting(&alice, &pool, 500, 0, 0, "PoolLocked");
 }
