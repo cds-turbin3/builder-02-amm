@@ -59,7 +59,19 @@ fn remove_liquidity_rejects_when_amount_below_min() {
     world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
 
     // Burning 500 LP returns (250, 1_000). Demanding min_a = 300 must reject.
-    world.remove_liquidity_expecting(&alice, &pool, 500, 300, 1_000, "SlippageExceeded");
+    world
+        .ctx
+        .tx(&[&alice.signer])
+        .build(
+            amm::RemoveLiquidityBundle::from((&pool, &alice)),
+            amm::instruction::RemoveLiquidity {
+                lp_burn: 500,
+                min_a: 300,
+                min_b: 1_000,
+            },
+        )
+        .send_err_named("SlippageExceeded")
+        .print_logs_structured();
 
     // Alice's LP unchanged; vaults unchanged.
     assert_eq!(
@@ -78,5 +90,17 @@ fn remove_liquidity_rejects_when_pool_locked() {
     world.deposit(&alice, &pool, 1_000, 4_000, 1_000);
     world.set_locked(&admin, &pool, true);
 
-    world.remove_liquidity_expecting(&alice, &pool, 500, 0, 0, "PoolLocked");
+    world
+        .ctx
+        .tx(&[&alice.signer])
+        .build(
+            amm::RemoveLiquidityBundle::from((&pool, &alice)),
+            amm::instruction::RemoveLiquidity {
+                lp_burn: 500,
+                min_a: 0,
+                min_b: 0,
+            },
+        )
+        .send_err_named("PoolLocked")
+        .print_logs_structured();
 }

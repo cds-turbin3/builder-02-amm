@@ -50,7 +50,18 @@ fn update_authority_renounce_then_admin_calls_fail() {
 
     // After renounce, a subsequent update_fee from the original admin must
     // fail: Config.authority is None, so the handler returns AuthorityRenounced.
-    world.update_fee_expecting(&admin, &pool, 50, "AuthorityRenounced");
+    world
+        .ctx
+        .tx(&[&admin.signer])
+        .build(
+            amm::UpdateFeeBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateFee { new_fee_bps: 50 },
+        )
+        .send_err_named("AuthorityRenounced")
+        .print_logs_structured();
 
     let config2: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config2.fee_bps, 30, "fee unchanged after failed call");
@@ -65,7 +76,18 @@ fn unauthorized_signer_cannot_update_fee() {
     // Bundle declares attacker as the authority signer; handler will compare
     // attacker.pubkey() to Config.authority (which is admin) and reject with
     // Unauthorized.
-    world.update_fee_expecting(&attacker, &pool, 1, "Unauthorized");
+    world
+        .ctx
+        .tx(&[&attacker.signer])
+        .build(
+            amm::UpdateFeeBundle {
+                authority: attacker.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateFee { new_fee_bps: 1 },
+        )
+        .send_err_named("Unauthorized")
+        .print_logs_structured();
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(config.fee_bps, 30, "fee remained at initial value");
@@ -79,7 +101,18 @@ fn unauthorized_signer_cannot_set_locked() {
     let (_admin, pool) = world.fresh_pool(30);
     let attacker = world.cast("Attacker");
 
-    world.set_locked_expecting(&attacker, &pool, true, "Unauthorized");
+    world
+        .ctx
+        .tx(&[&attacker.signer])
+        .build(
+            amm::SetLockedBundle {
+                authority: attacker.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::SetLocked { locked: true },
+        )
+        .send_err_named("Unauthorized")
+        .print_logs_structured();
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert!(!config.locked, "pool remained unlocked");
@@ -92,7 +125,18 @@ fn set_locked_after_renounce_fails() {
     let (admin, pool) = world.fresh_pool(30);
 
     world.update_authority(&admin, &pool, None);
-    world.set_locked_expecting(&admin, &pool, true, "AuthorityRenounced");
+    world
+        .ctx
+        .tx(&[&admin.signer])
+        .build(
+            amm::SetLockedBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::SetLocked { locked: true },
+        )
+        .send_err_named("AuthorityRenounced")
+        .print_logs_structured();
 }
 
 /// `update_authority` itself can be called by a non-authority. The handler's
@@ -103,7 +147,20 @@ fn unauthorized_signer_cannot_update_authority() {
     let (admin, pool) = world.fresh_pool(30);
     let attacker = world.cast("Attacker");
 
-    world.update_authority_expecting(&attacker, &pool, Some(&attacker), "Unauthorized");
+    world
+        .ctx
+        .tx(&[&attacker.signer])
+        .build(
+            amm::UpdateAuthorityBundle {
+                authority: attacker.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateAuthority {
+                new_authority: Some(attacker.pubkey()),
+            },
+        )
+        .send_err_named("Unauthorized")
+        .print_logs_structured();
 
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
     assert_eq!(
@@ -123,7 +180,20 @@ fn update_authority_after_renounce_fails() {
     world.update_authority(&admin, &pool, None);
 
     // Now try to un-renounce by setting authority back. Must fail.
-    world.update_authority_expecting(&admin, &pool, Some(&admin), "AuthorityRenounced");
+    world
+        .ctx
+        .tx(&[&admin.signer])
+        .build(
+            amm::UpdateAuthorityBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateAuthority {
+                new_authority: Some(admin.pubkey()),
+            },
+        )
+        .send_err_named("AuthorityRenounced")
+        .print_logs_structured();
 }
 
 /// `update_fee` must propagate: after changing the fee, a subsequent swap
@@ -189,7 +259,18 @@ fn update_authority_rotation_transfers_admin_privilege() {
     );
 
     // Alice can no longer call admin instructions (handler's Unauthorized).
-    world.set_locked_expecting(&alice_admin, &pool, false, "Unauthorized");
+    world
+        .ctx
+        .tx(&[&alice_admin.signer])
+        .build(
+            amm::SetLockedBundle {
+                authority: alice_admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::SetLocked { locked: false },
+        )
+        .send_err_named("Unauthorized")
+        .print_logs_structured();
 }
 
 /// `update_fee` must reject `new_fee_bps >= FEE_DENOMINATOR`. Same boundary
@@ -200,7 +281,18 @@ fn update_fee_rejects_invalid_fee_at_denominator() {
     let mut world = setup();
     let (admin, pool) = world.fresh_pool(30);
 
-    world.update_fee_expecting(&admin, &pool, 10_000, "InvalidFee");
+    world
+        .ctx
+        .tx(&[&admin.signer])
+        .build(
+            amm::UpdateFeeBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateFee { new_fee_bps: 10_000 },
+        )
+        .send_err_named("InvalidFee")
+        .print_logs_structured();
 
     // Fee unchanged.
     let config: Config = world.ctx.get_account(&pool.config).unwrap();

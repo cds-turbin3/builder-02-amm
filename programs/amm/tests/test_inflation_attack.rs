@@ -36,7 +36,19 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
         let (_admin, pool) = world.fresh_pool(30);
         let alice = world.user("Alice", 1_000_000, 1_000_000);
 
-        world.deposit_expecting(&alice, &pool, 1, 1, 0, "InsufficientLiquidity");
+        world
+            .ctx
+            .tx(&[&alice.signer])
+            .build(
+                amm::AddLiquidityBundle::from((&pool, &alice)),
+                amm::instruction::AddLiquidity {
+                    amount_a: 1,
+                    amount_b: 1,
+                    min_lp_tokens: 0,
+                },
+            )
+            .send_err_named("InsufficientLiquidity")
+            .print_logs_structured();
 
         // Alice's tokens never moved.
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
@@ -53,7 +65,19 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
         let (_admin, pool) = world.fresh_pool(30);
         let alice = world.user("Alice", 1_000_000, 1_000_000);
 
-        world.deposit_expecting(&alice, &pool, 1_000, 1_000, 0, "InsufficientLiquidity");
+        world
+            .ctx
+            .tx(&[&alice.signer])
+            .build(
+                amm::AddLiquidityBundle::from((&pool, &alice)),
+                amm::instruction::AddLiquidity {
+                    amount_a: 1_000,
+                    amount_b: 1_000,
+                    min_lp_tokens: 0,
+                },
+            )
+            .send_err_named("InsufficientLiquidity")
+            .print_logs_structured();
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_y), Some(1_000_000));
     }
@@ -127,7 +151,19 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     // failed attempt.
     let henry_lamports_before = world.ctx.svm.get_balance(&henry.pubkey()).unwrap();
 
-    let r = world.deposit_expecting(&henry, &pool, 1_000, 1_000, 0, "InsufficientLiquidity");
+    let r = world
+        .ctx
+        .tx(&[&henry.signer])
+        .build(
+            amm::AddLiquidityBundle::from((&pool, &henry)),
+            amm::instruction::AddLiquidity {
+                amount_a: 1_000,
+                amount_b: 1_000,
+                min_lp_tokens: 0,
+            },
+        )
+        .send_err_named("InsufficientLiquidity")
+        .print_logs_structured();
 
     // Token state rolls back: Henry's X/Y balances are exactly what they were.
     assert_eq!(world.ctx.svm.token_balance(&henry.ata_x), henry_x_before);

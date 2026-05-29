@@ -124,16 +124,21 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
     // 100 X actually delivers 360 Y; demanding 500 Y must reject.
     let bob = world.user("Bob", 1_000, 0);
     let bob_x_before = world.ctx.svm.token_balance(&bob.ata_x);
-    world.swap_expecting(
-        &bob,
-        &pool,
-        SwapKind::ExactInput {
-            amount_in: 100,
-            min_amount_out: 500,
-        },
-        SwapDir::AtoB,
-        "SlippageExceeded",
-    );
+    world
+        .ctx
+        .tx(&[&bob.signer])
+        .build(
+            amm::SwapBundle::from((&pool, &bob)),
+            amm::instruction::Swap {
+                kind: SwapKind::ExactInput {
+                    amount_in: 100,
+                    min_amount_out: 500,
+                },
+                a_to_b: SwapDir::AtoB.a_to_b(),
+            },
+        )
+        .send_err_named("SlippageExceeded")
+        .print_logs_structured();
 
     // Bob's tokens never moved.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), bob_x_before);
@@ -153,14 +158,19 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
     // 360 Y output requires 100 X input (per the exact-output math); capping
     // at 50 X must reject.
     let bob = world.user("Bob", 1_000, 0);
-    world.swap_expecting(
-        &bob,
-        &pool,
-        SwapKind::ExactOutput {
-            amount_out: 360,
-            max_amount_in: 50,
-        },
-        SwapDir::AtoB,
-        "SlippageExceeded",
-    );
+    world
+        .ctx
+        .tx(&[&bob.signer])
+        .build(
+            amm::SwapBundle::from((&pool, &bob)),
+            amm::instruction::Swap {
+                kind: SwapKind::ExactOutput {
+                    amount_out: 360,
+                    max_amount_in: 50,
+                },
+                a_to_b: SwapDir::AtoB.a_to_b(),
+            },
+        )
+        .send_err_named("SlippageExceeded")
+        .print_logs_structured();
 }

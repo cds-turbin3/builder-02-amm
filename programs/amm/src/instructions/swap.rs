@@ -185,15 +185,24 @@ impl<'info> Swap<'info> {
 /// Pubkey bundle for [`Swap`] tests. The `token_program` field auto-fills
 /// with the legacy SPL Token id; for Token-2022 tests, build the ix with
 /// `Program::build_ix_with(...)` and override `token_program` in the closure.
+///
+/// `BundleFrom` lets tests construct the bundle from a `(Pool, UserAccounts)`
+/// pair in one call: `SwapBundle::from((&pool, &user))`. The `#[from(u.x)]`
+/// overrides handle fields where the source binding's field name doesn't
+/// match the bundle's (`user_x` ← `u.ata_x`).
 #[cfg(feature = "test-helpers")]
-#[derive(anchor_litesvm::Bundle, Copy, Clone)]
+#[derive(anchor_litesvm::Bundle, anchor_litesvm::BundleFrom, Copy, Clone)]
+#[from_fixtures(p: crate::test_helpers::Pool, u: crate::test_helpers::UserAccounts)]
 pub struct SwapBundle {
+    #[from(u.pubkey())]
     pub user: Pubkey,
     pub mint_x: Pubkey,
     pub mint_y: Pubkey,
     pub config: Pubkey,
     pub vault_x: Pubkey,
     pub vault_y: Pubkey,
+    #[from(u.ata_x)]
     pub user_x: Pubkey,
+    #[from(u.ata_y)]
     pub user_y: Pubkey,
 }
