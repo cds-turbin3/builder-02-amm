@@ -51,7 +51,28 @@ fn initialize_rejects_invalid_fee_at_denominator() {
     let admin = world.cast("Admin");
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
 
-    world.initialize_expecting(&admin, &pool, 10_000, Some(&admin), "InvalidFee");
+    world
+        .ctx
+        .tx(&[&admin.signer])
+        .build(
+            amm::InitializeBundle {
+                initializer: admin.pubkey(),
+                mint_x: pool.mint_x,
+                mint_y: pool.mint_y,
+                mint_lp: pool.mint_lp,
+                vault_x: pool.vault_x,
+                vault_y: pool.vault_y,
+                lp_vault: pool.lp_vault,
+                config: pool.config,
+            },
+            amm::instruction::Initialize {
+                seed: pool.seed,
+                fee_bps: 10_000,
+                authority: Some(admin.pubkey()),
+            },
+        )
+        .send_err_named("InvalidFee")
+        .print_logs_structured();
 
     // Config was never created.
     assert!(!world.ctx.account_exists(&pool.config));

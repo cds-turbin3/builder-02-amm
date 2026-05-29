@@ -177,9 +177,15 @@ impl<'info> AddLiquidity<'info> {
 /// Pubkey bundle for [`AddLiquidity`] tests. The three program fields
 /// auto-fill; populate `config`, `mint_lp`, `vault_x`, `vault_y`,
 /// `lp_vault`, `user_x`, `user_y`, `user_lp` with the right ATAs / PDAs.
+///
+/// `BundleFrom`: build the whole bundle from a `(Pool, UserAccounts)`
+/// pair via `AddLiquidityBundle::from((&pool, &user))`. The `user_lp`
+/// projection composes both fixtures (`u.ata_lp(&p.mint_lp)`).
 #[cfg(feature = "test-helpers")]
-#[derive(anchor_litesvm::Bundle, Copy, Clone)]
+#[derive(anchor_litesvm::Bundle, anchor_litesvm::BundleFrom, Copy, Clone)]
+#[from_fixtures(p: crate::test_helpers::Pool, u: crate::test_helpers::UserAccounts)]
 pub struct AddLiquidityBundle {
+    #[from(u.pubkey())]
     pub user: Pubkey,
     pub mint_x: Pubkey,
     pub mint_y: Pubkey,
@@ -188,7 +194,10 @@ pub struct AddLiquidityBundle {
     pub vault_x: Pubkey,
     pub vault_y: Pubkey,
     pub lp_vault: Pubkey,
+    #[from(u.ata_x)]
     pub user_x: Pubkey,
+    #[from(u.ata_y)]
     pub user_y: Pubkey,
+    #[from(u.ata_lp(&p.mint_lp))]
     pub user_lp: Pubkey,
 }

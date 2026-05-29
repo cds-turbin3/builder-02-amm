@@ -26,6 +26,12 @@ pub mod error;
 pub mod instructions;
 pub mod state;
 
+// Test scaffolding: Pool + UserAccounts fixtures, plus the
+// AliasMirror impl on Pool. Gated alongside the per-ix Bundle structs
+// in `instructions/*.rs` so the on-chain BPF binary stays clean.
+#[cfg(all(not(target_os = "solana"), feature = "test-helpers"))]
+pub mod test_helpers;
+
 pub use constants::*;
 pub use instructions::*;
 pub use state::*;

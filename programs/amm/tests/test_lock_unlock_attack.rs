@@ -64,16 +64,21 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     world.set_locked(&admin, &pool, true);
 
     // ----- Step 2: bob tries to swap, rejected with PoolLocked -----
-    world.swap_expecting(
-        &bob,
-        &pool,
-        SwapKind::ExactInput {
-            amount_in: 10_000,
-            min_amount_out: 1,
-        },
-        SwapDir::AtoB,
-        "PoolLocked",
-    );
+    world
+        .ctx
+        .tx(&[&bob.signer])
+        .build(
+            SwapBundle::from((&pool, &bob)),
+            amm::instruction::Swap {
+                kind: SwapKind::ExactInput {
+                    amount_in: 10_000,
+                    min_amount_out: 1,
+                },
+                a_to_b: SwapDir::AtoB.a_to_b(),
+            },
+        )
+        .send_err_named("PoolLocked")
+        .print_logs_structured();
 
     // Capture state before the attack tx.
     let admin_x_before = world.ctx.svm.token_balance(&admin.ata_x).unwrap();
@@ -97,16 +102,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         amm::instruction::SetLocked { locked: false },
     );
     let admin_swap_ix = world.ctx.program().build_ix(
-        SwapBundle {
-            user: admin.pubkey(),
-            mint_x: pool.mint_x,
-            mint_y: pool.mint_y,
-            config: pool.config,
-            vault_x: pool.vault_x,
-            vault_y: pool.vault_y,
-            user_x: admin.ata_x,
-            user_y: admin.ata_y,
-        },
+        SwapBundle::from((&pool, &admin)),
         amm::instruction::Swap {
             kind: SwapKind::ExactInput {
                 amount_in: 100_000,
@@ -165,14 +161,19 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     // byte-identical and litesvm doesn't reject with `AlreadyProcessed`
     // (same data + same blockhash = same signature, deduped). We want to
     // actually hit the handler and confirm the PoolLocked failure path.
-    world.swap_expecting(
-        &bob,
-        &pool,
-        SwapKind::ExactInput {
-            amount_in: 5_000,
-            min_amount_out: 1,
-        },
-        SwapDir::AtoB,
-        "PoolLocked",
-    );
+    world
+        .ctx
+        .tx(&[&bob.signer])
+        .build(
+            SwapBundle::from((&pool, &bob)),
+            amm::instruction::Swap {
+                kind: SwapKind::ExactInput {
+                    amount_in: 5_000,
+                    min_amount_out: 1,
+                },
+                a_to_b: SwapDir::AtoB.a_to_b(),
+            },
+        )
+        .send_err_named("PoolLocked")
+        .print_logs_structured();
 }

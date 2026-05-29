@@ -31,16 +31,21 @@ fn swap_with_truncated_amount_in_returns_insufficient_output() {
     world.deposit(&alice, &pool, 1_000, 4_000, 1);
 
     let bob = world.user("Bob", 10, 0);
-    world.swap_expecting(
-        &bob,
-        &pool,
-        SwapKind::ExactInput {
-            amount_in: 1,
-            min_amount_out: 0,
-        },
-        SwapDir::AtoB,
-        "InsufficientOutput",
-    );
+    world
+        .ctx
+        .tx(&[&bob.signer])
+        .build(
+            amm::SwapBundle::from((&pool, &bob)),
+            amm::instruction::Swap {
+                kind: SwapKind::ExactInput {
+                    amount_in: 1,
+                    min_amount_out: 0,
+                },
+                a_to_b: SwapDir::AtoB.a_to_b(),
+            },
+        )
+        .send_err_named("InsufficientOutput")
+        .print_logs_structured();
 
     // Bob's X is untouched.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(10));

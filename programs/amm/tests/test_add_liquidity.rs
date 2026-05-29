@@ -96,7 +96,19 @@ fn add_liquidity_rejects_when_lp_below_min() {
     // sqrt(4_000_000) - MINIMUM_LIQUIDITY = 1_000 to the user. Asking for
     // 1_001 must reject.
     let alice = world.user("Alice", 10_000, 40_000);
-    world.deposit_expecting(&alice, &pool, 1_000, 4_000, 1_001, "SlippageExceeded");
+    world
+        .ctx
+        .tx(&[&alice.signer])
+        .build(
+            amm::AddLiquidityBundle::from((&pool, &alice)),
+            amm::instruction::AddLiquidity {
+                amount_a: 1_000,
+                amount_b: 4_000,
+                min_lp_tokens: 1_001,
+            },
+        )
+        .send_err_named("SlippageExceeded")
+        .print_logs_structured();
 
     // Alice's tokens unmoved; vaults still empty.
     assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(10_000));
@@ -114,5 +126,17 @@ fn add_liquidity_rejects_when_pool_locked() {
     let alice = world.user("Alice", 10_000, 40_000);
     world.set_locked(&admin, &pool, true);
 
-    world.deposit_expecting(&alice, &pool, 1_000, 4_000, 0, "PoolLocked");
+    world
+        .ctx
+        .tx(&[&alice.signer])
+        .build(
+            amm::AddLiquidityBundle::from((&pool, &alice)),
+            amm::instruction::AddLiquidity {
+                amount_a: 1_000,
+                amount_b: 4_000,
+                min_lp_tokens: 0,
+            },
+        )
+        .send_err_named("PoolLocked")
+        .print_logs_structured();
 }
