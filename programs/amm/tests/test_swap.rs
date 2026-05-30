@@ -8,7 +8,7 @@ mod common;
 
 use amm::SwapKind;
 use anchor_litesvm::TestHelpers;
-use common::{setup, MarkdownCapture, SwapDir};
+use common::{setup, SwapDir};
 
 #[test]
 fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {

@@ -37,7 +37,7 @@ mod common;
 
 use amm::{SwapBundle, SwapKind};
 use anchor_litesvm::{TestHelpers, TransactionHelpers};
-use common::{setup, MarkdownCapture, SwapDir};
+use common::{setup, SwapDir};
 
 #[test]
 fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
