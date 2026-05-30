@@ -84,14 +84,13 @@ pub struct Scenario {
 /// Bootstrap a fresh `Scenario`: program loaded, two SPL Token mints
 /// (decimals = 6) created, a `mint_authority` capable of minting either.
 pub fn setup() -> Scenario {
-    let mut ctx = AnchorLiteSVM::build_with_program(amm::ID, AMM_BYTES);
+    // `build_with_program` registers `"amm"` as the program's alias.
+    let mut ctx = AnchorLiteSVM::build_with_program(amm::ID, "amm", AMM_BYTES);
     let mint_authority = ctx.svm.create_funded_account(DEFAULT_SOL).unwrap();
     let mint_x_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
     let mint_y_kp = ctx.svm.create_token_mint(&mint_authority, 6).unwrap();
     let (mint_x, mint_y) = (mint_x_kp.pubkey(), mint_y_kp.pubkey());
-    ctx.alias(amm::ID, "amm")
-        .alias(mint_x, "MintX")
-        .alias(mint_y, "MintY");
+    ctx.alias(mint_x, "MintX").alias(mint_y, "MintY");
     Scenario {
         ctx,
         mint_authority,
