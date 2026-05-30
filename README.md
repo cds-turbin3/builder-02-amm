@@ -1,6 +1,6 @@
 # Constant-Product AMM
 
-A pool-based automated market maker using the constant-product invariant `x * y = k`, written in Anchor and tested against LiteSVM through the [`anchor-litesvm`](https://github.com/cds-rs/anchor-litesvm/tree/class/ask) test crate.
+A pool-based automated market maker using the constant-product invariant `x * y = k`, written in Anchor and tested against LiteSVM through the [`anchor-litesvm`](https://github.com/cds-rs/anchor-litesvm/tree/feat/euler) test crate.
 
 The AMM is intentionally minimal: small enough to audit end-to-end in an afternoon, complete enough to exercise the parts of an AMM that matter (slippage-protected swaps, sqrt-bootstrapped initial liquidity, proportional burns, a fee that accrues into the reserve, an authority that can be renounced). But the interesting part of this repository is not the AMM itself; it is the question underneath it: can a test harness make transactional systems legible to people who did not write them?
 
@@ -8,7 +8,7 @@ A word on terminology, since "legible" is doing real work here: I'll use it thro
 
 ## What this project is really about
 
-This is the test bed for an evaluation of three features in the `class/ask` fork of `anchor-litesvm`, each of which is a different answer to that question:
+This is the test bed for an evaluation of three features in the `feat/euler` fork of `anchor-litesvm`, each of which is a different answer to that question:
 
 1. **Macro conveniences** for building instructions (`#[derive(Bundle)]`, `#[derive(BundledPubkeys)]`)
 2. **Structured logging** for reading CPI traces (`print_logs_structured`, alias tables)
@@ -60,7 +60,7 @@ That readability becomes important later: the structured-log tooling ended up ex
 
 LiteSVM gives you Solana's program-log stream verbatim: a flat list of `Program log:` lines per CPI frame, plus raw program-id base58. Useful for a single small failure, hostile for anything with three levels of CPI.
 
-`print_logs_structured(&world.aliases)` parses that stream into a tree, decodes Anchor's `Program log: Instruction: <Name>` convention to name each frame, substitutes well-known program IDs (`Token`, `System`, `AssociatedToken`) for their addresses, and resolves the test's own aliases for any pubkeys that surface in the trace (signers, named actors) into the names the test wrote (`Alice`, `Bob`, `Admin`).
+`print_logs_structured()` parses that stream into a tree, decodes Anchor's `Program log: Instruction: <Name>` convention to name each frame, substitutes well-known program IDs (`Token`, `System`, `AssociatedToken`) for their addresses, and resolves the test's own aliases for any pubkeys that surface in the trace (signers, named actors) into the names the test wrote (`Alice`, `Bob`, `Admin`). (The aliases ride on the `AnchorContext` and thread through automatically, so the call takes no argument; `logs_structured_string()` returns the same content as a `String` for capture.)
 
 Here is how the lock/unlock vulnerability surfaced. The test (`test_lock_unlock_attack`) was passing. That was expected; at the time, the lock/unlock pattern was permitted by the spec. What was not expected was the *shape* of the trace. The structured-log output had three sibling top-level frames inside one transaction, all signed by Admin:
 
@@ -85,9 +85,9 @@ What this earned us:
 
 - **The vulnerability.** [Issue 001](docs/security/issues/001-lock-unlock-timing-attack.md) was discovered by *reading* the structured log of a test that was passing. The shape of the tree was the smoking gun. The [classroom exercise](docs/security/exercises/001-what-is-going-on.md) is built directly on that captured output.
 - **Test-as-narrative.** Signer columns read as roles (`signer=Admin`) rather than base58, and the `Legend` block at the bottom of every transaction resolves the remaining aliases (program IDs and named actors) inline. Frame labels use the program's own instruction names (`amm::SetLocked`, `amm::Swap`), so the tree reads as a sequence of *operations* rather than a sequence of opaque program calls.
-- **Cheap diff for behavior changes.** When a refactor changes the CPI tree's shape, the structured-log diff shows exactly which CPI frames moved, were added, or were dropped. CU magnitudes drift run-to-run (Anchor's `find_program_address` for randomly-keyed ATAs consumes a variable amount of CU per call; see the [exercise's footnote](docs/security/exercises/001-what-is-going-on.md)), but the *shape* is stable.
+- **Cheap diff for behavior changes.** When a refactor changes the CPI tree's shape, the structured-log diff shows exactly which CPI frames moved, were added, or were dropped. Since the move to deterministic keypairs, CU magnitudes are now stable run-to-run too, so a CU delta in a diff is itself a real signal rather than noise. (We still don't *assert* exact CU magnitudes: they're a function of the seeded test pubkeys' ATA bump-search lengths, not a production user's, so they're reproducible without being a production prediction. This reverses an earlier caveat that CU "drifts run-to-run", which held only while fixtures used random keypairs; see the [exercise's footnote](docs/security/exercises/001-what-is-going-on.md).)
 
-Caveat (and why it's actually a feature): aliasing requires the test to register names with the world's `Aliases` table. Every helper that creates a keypair (`world.make_user`, `world.fresh_pool`) does the registration; if a test goes off-pattern and constructs a `Keypair::new()` directly without aliasing it, the log degrades back to base58. The fix has always been "register it through the helper."
+Caveat (and why it's actually a feature): aliasing requires the test to register names with the world's `Aliases` table. Every helper that creates a keypair (`world.user`, `world.cast`, `world.fresh_pool`) does the registration; if a test goes off-pattern and constructs a keypair directly without aliasing it, the log degrades back to base58. (With deterministic keypairs this is doubly true: an unaliased key is both unnamed *and* a raw base58 string, where an aliased one reads as `Alice` and is stable across runs.) The fix has always been "register it through the helper."
 
 We treat that overhead as a feature, not a tax. The whole point of the alias table is to elevate the actors in a scenario (Alice, Bob, Admin, the pool, the vaults) into first-class citizens of the trace. A test you can read as "Alice deposits, Bob swaps, Admin locks" is a test that an auditor or future maintainer can argue *about*; a test that reads as "`6PqHNGix…xUVG` signs `8r9fJP9H…bjUA` over to `CYbYnHW7…2yf5`" is one they can only argue *with*. That is exactly the "tests as communication across domain experts" framing the project is built around: the aliases are how the test's vocabulary survives the trip from author to reader.
 
@@ -162,9 +162,9 @@ The common thread across all three features is not convenience; it is legibility
 
 **Math.** Integer-only, `u128` intermediates, rounding always favors the pool. The pure-function library lives in `crates/amm-math/`; the Anchor program calls it, then enforces slippage and moves tokens. Full formulas and rounding rules in [`toy-amm.spec.md`](docs/toy-amm.spec.md).
 
-**Invariants.** Five program-level invariants (positivity; constant-product `new_k >= old_k`; pre-fee invariant; no-dilution on deposits; exact reserve identities). Property tests in `crates/amm-math/tests/` verify them over thousands of random inputs; the integration tests in `programs/amm/tests/` verify them across realistic instruction sequences. Full list in [`docs/design.md`](docs/design.md#invariants) with proofs in the spec.
+**Invariants.** Five program-level invariants (positivity; constant-product `new_k >= old_k`; pre-fee invariant; no-dilution on deposits; exact reserve identities). Property tests in `crates/amm-math/` (proptest, alongside the unit tests in each module) verify them over thousands of random inputs; the integration tests in `programs/amm/tests/` verify them across realistic instruction sequences. Full list in [`docs/design.md`](docs/design.md#invariants) with proofs in the spec.
 
-**Testing.** 14 integration tests (one file per scenario family) + 71 amm-math unit and property tests = 85 tests in the workspace. Architecture is the bundle-as-actor pattern documented in [`docs/testing.md`](docs/testing.md). On `feat/euler`, every verb ends with `print_markdown_pair()` (a method on `TransactionResult` in `anchor-litesvm` itself), which prints the structured CPI tree *and* a Mermaid sequence diagram with lifelines, both wrapped in README-ready markdown delimiters. So a failing test's tree is the first thing you see, and the same output drops straight into a markdown file for an issue or post-mortem.
+**Testing.** 37 integration tests (nine files, one per scenario family) + 71 amm-math unit and property tests = 108 tests in the workspace. Architecture is the bundle-as-actor pattern documented in [`docs/testing.md`](docs/testing.md). On `feat/euler`, every verb ends with `print_markdown_pair()` (a method on `TransactionResult` in `anchor-litesvm` itself), which prints the structured CPI tree *and* a Mermaid sequence diagram with lifelines, both wrapped in README-ready markdown delimiters. So a failing test's tree is the first thing you see, and the same output drops straight into a markdown file for an issue or post-mortem.
 
 ---
 
@@ -1233,4 +1233,4 @@ The pre-commit hook runs `cargo clippy --all-targets --features amm/test-helpers
 - [`docs/toy-amm.spec.md`](docs/toy-amm.spec.md): math spec.
 - [`docs/testing.md`](docs/testing.md): bundle-as-actor pattern + scenario catalog.
 - [`docs/security/`](docs/security/): findings, responses, exercises.
-- [`anchor-litesvm` `class/ask` fork](https://github.com/cds-rs/anchor-litesvm/tree/class/ask): upstream for the macro, log, and time-warp work.
+- [`anchor-litesvm` `feat/euler` fork](https://github.com/cds-rs/anchor-litesvm/tree/feat/euler): upstream for the macro, log, and time-warp work.
