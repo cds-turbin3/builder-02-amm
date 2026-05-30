@@ -4,8 +4,11 @@
 //! Subjects: none; the (mint_x, mint_y) pair lives on the `Scenario`,
 //! not as a per-test subject.
 //!
-//! See `docs/testing/actors-as-first-class-citizens.md` for the
-//! methodology.
+//! Each test threads a [`Report`]: it narrates intent and snapshots the
+//! resulting Config + vault state, and its `check`s double as the assertions.
+//! The Markdown lands in `target/md-reports/<slug>.md`.
+//!
+//! See `docs/testing/actors-as-first-class-citizens.md` for the methodology.
 
 #![cfg(feature = "test-helpers")]
 
@@ -13,10 +16,17 @@ mod common;
 
 use amm::Config;
 use anchor_litesvm::TestHelpers;
-use common::{setup, Pool};
+use common::{setup, MarkdownBlock, Pool, Report};
 
 #[test]
 fn initialize_creates_config_lp_mint_and_vaults() {
+    let mut md = Report::new(
+        "Initialize: creates Config, LP mint, and both vaults",
+        "Initializing a pool writes the args verbatim into Config (unlocked), \
+         and creates the LP mint plus the X / Y reserve vaults and the lock \
+         vault, all at zero balance.",
+    );
+
     let mut world = setup();
     let admin = world.cast("Admin");
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
@@ -24,21 +34,26 @@ fn initialize_creates_config_lp_mint_and_vaults() {
     world.alias(pool.mint_lp, "MintLP");
 
     let fee_bps: u16 = 30;
+    md.step("Action: admin initializes pool at seed 0 with fee_bps = 30");
     world.initialize(&admin, &pool, fee_bps, Some(&admin));
+
+    md.step("After: Config carries the args and starts unlocked");
+    md.block("config", world.observe_config(&pool));
 
     // Config carries the args verbatim and starts unlocked.
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
-    assert_eq!(config.seed, 0);
-    assert_eq!(config.fee_bps, fee_bps);
-    assert_eq!(config.authority, Some(admin.pubkey()));
-    assert_eq!(config.mint_x, pool.mint_x);
-    assert_eq!(config.mint_y, pool.mint_y);
-    assert!(!config.locked);
+    md.check("seed", 0, config.seed);
+    md.check("fee_bps", fee_bps, config.fee_bps);
+    md.check("authority is admin", Some(admin.pubkey()), config.authority);
+    md.check("mint_x recorded", pool.mint_x, config.mint_x);
+    md.check("mint_y recorded", pool.mint_y, config.mint_y);
+    md.check("starts unlocked", false, config.locked);
 
-    // LP mint, both reserve vaults, and the lock vault all exist at zero balance.
-    assert_eq!(world.ctx.svm.token_balance(&pool.vault_x), Some(0));
-    assert_eq!(world.ctx.svm.token_balance(&pool.vault_y), Some(0));
-    assert_eq!(world.ctx.svm.token_balance(&pool.lp_vault), Some(0));
+    md.step("After: LP mint, both reserve vaults, and the lock vault exist at zero");
+    md.snapshot("pool", &world.observe_pool(&pool));
+    md.check("vault_x exists, empty", Some(0), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check("vault_y exists, empty", Some(0), world.ctx.svm.token_balance(&pool.vault_y));
+    md.check("lp_vault exists, empty", Some(0), world.ctx.svm.token_balance(&pool.lp_vault));
 }
 
 /// `fee_bps >= FEE_DENOMINATOR (10_000)` is rejected at init. The handler's
@@ -47,11 +62,19 @@ fn initialize_creates_config_lp_mint_and_vaults() {
 /// and proves a fee that high never reaches Config storage.
 #[test]
 fn initialize_rejects_invalid_fee_at_denominator() {
+    let mut md = Report::new(
+        "Initialize: rejects fee_bps at the denominator boundary",
+        "fee_bps must be strictly less than FEE_DENOMINATOR (10_000). Passing \
+         exactly 10_000 must reject with InvalidFee, and Config must never be \
+         created.",
+    );
+
     let mut world = setup();
     let admin = world.cast("Admin");
     let pool = Pool::derive(0, world.mint_x, world.mint_y);
 
-    world
+    md.step("Action: initialize with fee_bps = 10_000 (the boundary)");
+    let rejection = world
         .ctx
         .tx(&[&admin.signer])
         .build(
@@ -71,9 +94,12 @@ fn initialize_rejects_invalid_fee_at_denominator() {
                 authority: Some(admin.pubkey()),
             },
         )
-        .send_err_named("InvalidFee")
-        .print_logs_structured();
+        .send_err_named("InvalidFee");
+    md.block(
+        "rejection logs",
+        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+    );
 
-    // Config was never created.
-    assert!(!world.ctx.account_exists(&pool.config));
+    md.step("After: Config was never created");
+    md.check("config account absent", false, world.ctx.account_exists(&pool.config));
 }
