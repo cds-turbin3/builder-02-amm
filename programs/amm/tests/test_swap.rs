@@ -1,6 +1,10 @@
 //! `swap` happy paths: exact-input and exact-output, in the `a_to_b == true`
 //! direction. Asserts on user/vault balances and that the constant-product
 //! invariant `k` did not shrink across the trade.
+//!
+//! Each test threads a [`Report`]: intent + before/after snapshots, with
+//! `check`s doubling as the assertions. Markdown lands in
+//! `target/md-reports/<slug>.md`.
 
 #![cfg(feature = "test-helpers")]
 
@@ -8,70 +12,83 @@ mod common;
 
 use amm::SwapKind;
 use anchor_litesvm::TestHelpers;
-use common::{setup, SwapDir};
+use common::{setup, MarkdownBlock, Report, SwapDir};
 
 #[test]
 fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
+    let mut md = Report::new(
+        "Swap (exact-input, X→Y): balances move and k grows",
+        "Into a (1000, 4000) pool, Bob swaps 100 X for Y. With fee_bps = 30: \
+         amount_after_fee = floor(100·9970/10000) = 99; amount_out = \
+         floor(99·4000/1099) = 360. The constant product k must strictly grow \
+         (the fee stays in the reserves).",
+    );
+
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
-    // Open the pool with reserves (1_000, 4_000).
     let lp = world.user("LP", 10_000, 40_000);
+    md.step("Setup: LP opens the pool with reserves (1000, 4000)");
     world.deposit(&lp, &pool, 1_000, 4_000, 1_000);
 
-    // Bob brings 1_000 X; swap 100 of them for Y.
-    //   amount_after_fee = floor(100 * 9_970 / 10_000) = 99
-    //   amount_out = floor(99 * 4_000 / (1_000 + 99)) = floor(396_000 / 1_099) = 360
     let bob = world.user("Bob", 1_000, 0);
+    md.step("Before: Bob holds 1000 X, 0 Y");
+    md.snapshot("pool", &world.observe_pool(&pool));
+    md.snapshot("bob", &world.observe_user(&bob, &pool));
+
+    md.step("Action: Bob swaps exactly 100 X in");
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactInput {
-            amount_in: 100,
-            min_amount_out: 1,
-        },
+        SwapKind::ExactInput { amount_in: 100, min_amount_out: 1 },
         SwapDir::AtoB,
     );
 
-    // Bob paid 100 X, received 360 Y.
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(900), "bob X");
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_y), Some(360), "bob Y");
+    md.step("After: Bob paid 100 X, received 360 Y; reserves shifted");
+    md.snapshot("pool", &world.observe_pool(&pool));
+    md.snapshot("bob", &world.observe_user(&bob, &pool));
 
-    // Vaults now hold the new reserves.
-    assert_eq!(world.ctx.svm.token_balance(&pool.vault_x), Some(1_100));
-    assert_eq!(world.ctx.svm.token_balance(&pool.vault_y), Some(3_640));
+    md.check("bob X (1000 − 100)", Some(900), world.ctx.svm.token_balance(&bob.ata_x));
+    md.check("bob Y received", Some(360), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check("vault_x (1000 + 100)", Some(1_100), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check("vault_y (4000 − 360)", Some(3_640), world.ctx.svm.token_balance(&pool.vault_y));
 
-    // k strictly grew (fee accrued).
     let k_pre = 1_000u128 * 4_000u128;
     let k_post = 1_100u128 * 3_640u128;
-    assert!(k_post > k_pre, "k did not grow: {} -> {}", k_pre, k_post);
+    md.note(format!("k: {k_pre} → {k_post} (fee accrued to reserves)"));
+    md.check("k strictly grew", true, k_post > k_pre);
 }
 
 #[test]
 fn exact_output_swap_a_to_b_pays_calculated_input() {
+    let mut md = Report::new(
+        "Swap (exact-output, X→Y): pays the calculated input",
+        "Bob wants exactly 360 Y out of a (1000, 4000) pool. The ceiling-rounded \
+         inverse requires 100 X in: amount_in_after_fee = ceil(360·1000/3640) = \
+         99; amount_in = ceil(99·10000/9970) = 100. He pays exactly that, capped \
+         at max_amount_in = 100.",
+    );
+
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
     let lp = world.user("LP", 10_000, 40_000);
+    md.step("Setup: LP opens the pool with reserves (1000, 4000)");
     world.deposit(&lp, &pool, 1_000, 4_000, 1_000);
 
-    // Bob wants exactly 360 Y. Required input by ceiling-rounded inverse:
-    //   amount_in_after_fee = ceil(360 * 1_000 / (4_000 - 360)) = 99
-    //   amount_in = ceil(99 * 10_000 / 9_970) = 100
     let bob = world.user("Bob", 1_000, 0);
+    md.step("Action: Bob requests exactly 360 Y out, capping input at 100 X");
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactOutput {
-            amount_out: 360,
-            max_amount_in: 100,
-        },
+        SwapKind::ExactOutput { amount_out: 360, max_amount_in: 100 },
         SwapDir::AtoB,
     );
 
-    // Bob paid exactly 100 X (at the max_amount_in cap), received exactly 360 Y.
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(900), "bob X");
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_y), Some(360), "bob Y");
+    md.step("After: Bob paid exactly 100 X, received exactly 360 Y");
+    md.snapshot("bob", &world.observe_user(&bob, &pool));
+    md.check("bob X (1000 − 100)", Some(900), world.ctx.svm.token_balance(&bob.ata_x));
+    md.check("bob Y == requested", Some(360), world.ctx.svm.token_balance(&bob.ata_y));
 }
 
 /// Mirror of `exact_input_swap_a_to_b_moves_balances_and_grows_k` in the
@@ -80,33 +97,37 @@ fn exact_output_swap_a_to_b_pays_calculated_input() {
 /// both halves, not just the a_to_b side.
 #[test]
 fn exact_input_swap_b_to_a_picks_reserves_in_reverse() {
+    let mut md = Report::new(
+        "Swap (exact-input, Y→X): direction branch picks reserves in reverse",
+        "The mirror of the X→Y case: Bob swaps 100 Y for X into a (1000, 4000) \
+         pool. amount_after_fee = floor(100·9970/10000) = 99; amount_out = \
+         floor(99·1000/4099) = 24. This exercises the handler's `if a_to_b` \
+         branch on its reverse leg.",
+    );
+
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
     let lp = world.user("LP", 10_000, 40_000);
+    md.step("Setup: LP opens the pool with reserves (1000, 4000)");
     world.deposit(&lp, &pool, 1_000, 4_000, 1_000);
 
-    // Bob brings Y; swap 100 Y for X.
-    //   amount_after_fee = floor(100 * 9_970 / 10_000) = 99
-    //   amount_out = floor(99 * 1_000 / (4_000 + 99)) = floor(99_000 / 4_099) = 24
     let bob = world.user("Bob", 0, 1_000);
+    md.step("Action: Bob swaps exactly 100 Y in");
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactInput {
-            amount_in: 100,
-            min_amount_out: 1,
-        },
+        SwapKind::ExactInput { amount_in: 100, min_amount_out: 1 },
         SwapDir::BtoA,
     );
 
-    // Bob paid 100 Y, received 24 X.
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_y), Some(900), "bob Y");
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), Some(24), "bob X");
-
-    // Vaults reflect: Y up, X down.
-    assert_eq!(world.ctx.svm.token_balance(&pool.vault_y), Some(4_100));
-    assert_eq!(world.ctx.svm.token_balance(&pool.vault_x), Some(976));
+    md.step("After: Bob paid 100 Y, received 24 X; reserves shifted in reverse");
+    md.snapshot("pool", &world.observe_pool(&pool));
+    md.snapshot("bob", &world.observe_user(&bob, &pool));
+    md.check("bob Y (1000 − 100)", Some(900), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check("bob X received", Some(24), world.ctx.svm.token_balance(&bob.ata_x));
+    md.check("vault_y (4000 + 100)", Some(4_100), world.ctx.svm.token_balance(&pool.vault_y));
+    md.check("vault_x (1000 − 24)", Some(976), world.ctx.svm.token_balance(&pool.vault_x));
 }
 
 /// Slippage protection on exact-input: if the user's `min_amount_out` is
@@ -115,62 +136,82 @@ fn exact_input_swap_b_to_a_picks_reserves_in_reverse() {
 /// guardrail against reserves moving between quote time and execution time.
 #[test]
 fn exact_input_swap_rejects_when_amount_out_below_min() {
+    let mut md = Report::new(
+        "Swap (exact-input): rejects when output is below the slippage floor",
+        "100 X actually delivers 360 Y; demanding min_amount_out = 500 must \
+         reject with SlippageExceeded before any token moves. This is the \
+         user-side guardrail against reserves shifting between quote and \
+         execution.",
+    );
+
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
     let lp = world.user("LP", 10_000, 40_000);
+    md.step("Setup: LP opens the pool with reserves (1000, 4000)");
     world.deposit(&lp, &pool, 1_000, 4_000, 1_000);
 
-    // 100 X actually delivers 360 Y; demanding 500 Y must reject.
     let bob = world.user("Bob", 1_000, 0);
     let bob_x_before = world.ctx.svm.token_balance(&bob.ata_x);
-    world
+    md.step("Action: swap 100 X in but demand ≥ 500 Y out");
+    let rejection = world
         .ctx
         .tx(&[&bob.signer])
         .build(
             amm::SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactInput {
-                    amount_in: 100,
-                    min_amount_out: 500,
-                },
+                kind: SwapKind::ExactInput { amount_in: 100, min_amount_out: 500 },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
-        .send_err_named("SlippageExceeded")
-        .print_markdown_pair();
+        .send_err_named("SlippageExceeded");
+    md.block(
+        "rejection logs",
+        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+    );
 
-    // Bob's tokens never moved.
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), bob_x_before);
-    assert_eq!(world.ctx.svm.token_balance(&bob.ata_y), Some(0));
+    md.step("After: Bob's tokens never moved");
+    md.snapshot("bob", &world.observe_user(&bob, &pool));
+    md.check("bob X unmoved", bob_x_before, world.ctx.svm.token_balance(&bob.ata_x));
+    md.check("bob Y still zero", Some(0), world.ctx.svm.token_balance(&bob.ata_y));
 }
 
 /// Slippage protection on exact-output: if the user's `max_amount_in` is
 /// lower than the math's required input, the handler must reject.
 #[test]
 fn exact_output_swap_rejects_when_amount_in_above_max() {
+    let mut md = Report::new(
+        "Swap (exact-output): rejects when required input exceeds the cap",
+        "360 Y output requires 100 X input; capping max_amount_in at 50 must \
+         reject with SlippageExceeded.",
+    );
+
     let mut world = setup();
     let (_admin, pool) = world.fresh_pool(30);
 
     let lp = world.user("LP", 10_000, 40_000);
+    md.step("Setup: LP opens the pool with reserves (1000, 4000)");
     world.deposit(&lp, &pool, 1_000, 4_000, 1_000);
 
-    // 360 Y output requires 100 X input (per the exact-output math); capping
-    // at 50 X must reject.
     let bob = world.user("Bob", 1_000, 0);
-    world
+    md.step("Action: request 360 Y out but cap input at 50 X (math needs 100)");
+    let rejection = world
         .ctx
         .tx(&[&bob.signer])
         .build(
             amm::SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactOutput {
-                    amount_out: 360,
-                    max_amount_in: 50,
-                },
+                kind: SwapKind::ExactOutput { amount_out: 360, max_amount_in: 50 },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
-        .send_err_named("SlippageExceeded")
-        .print_markdown_pair();
+        .send_err_named("SlippageExceeded");
+    md.block(
+        "rejection logs",
+        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+    );
+
+    md.step("After: Bob's tokens never moved");
+    md.check("bob X unmoved", Some(1_000), world.ctx.svm.token_balance(&bob.ata_x));
+    md.check("bob Y still zero", Some(0), world.ctx.svm.token_balance(&bob.ata_y));
 }
