@@ -4,7 +4,7 @@ A pool-based automated market maker using the constant-product invariant `x * y 
 
 The AMM is intentionally minimal: small enough to audit end-to-end in an afternoon, complete enough to exercise the parts of an AMM that matter (slippage-protected swaps, sqrt-bootstrapped initial liquidity, proportional burns, a fee that accrues into the reserve, an authority that can be renounced). But the interesting part of this repository is not the AMM itself; it is the question underneath it: can a test harness make transactional systems legible to people who did not write them?
 
-A word on terminology, since "legible" is doing real work here: I'll use it throughout to mean something specific. A trace is *legible* when a reader who did not write the test can infer what happened, and why, without consulting the test code. That is a stronger property than "the test passes" and a weaker one than "the test is provably correct." The three features evaluated below are each, in their own way, a tool for moving traces along that axis.
+A word on terminology, since "legible" is doing real work here: I'll use it throughout to mean something specific. A trace is *legible* when a reader who did not write the test can infer what happened, and why, without consulting the test code. That is a stronger property than "the test passes" and a weaker one than "the test is provably correct." The four features evaluated below are each, in their own way, a tool for moving traces along that axis.
 
 ## Contents
 
@@ -12,6 +12,7 @@ A word on terminology, since "legible" is doing real work here: I'll use it thro
 - [1. Macro conveniences: `Bundle` and `BundledPubkeys`](#1-macro-conveniences-bundle-and-bundledpubkeys)
 - [2. Structured logging: `print_logs_structured` and aliases](#2-structured-logging-print_logs_structured-and-aliases)
 - [3. Timestamp / time-warp: `warp_to_timestamp`, `advance_clock_by_seconds`](#3-timestamp--time-warp-warp_to_timestamp-advance_clock_by_seconds)
+- [4. Deterministic identities and the `Report` recorder](#4-deterministic-identities-and-the-report-recorder)
 - [How does it hold up?](#how-does-it-hold-up)
 - [What ties this together](#what-ties-this-together)
 - [Math, invariants, and testing in one paragraph each](#math-invariants-and-testing-in-one-paragraph-each)
@@ -22,11 +23,12 @@ A word on terminology, since "legible" is doing real work here: I'll use it thro
 
 ## What this project is really about
 
-This is the test bed for an evaluation of three features in the `feat/euler` fork of `anchor-litesvm`, each of which is a different answer to that question:
+This is the test bed for an evaluation of four features in the `feat/euler` fork of `anchor-litesvm`, each of which is a different answer to that question:
 
 1. **Macro conveniences** for building instructions (`#[derive(Bundle)]`, `#[derive(BundledPubkeys)]`)
 2. **Structured logging** for reading CPI traces (`print_logs_structured`, alias tables)
 3. **Timestamp / time-warp** primitives for testing time-gated behavior (`warp_to_timestamp`, `advance_clock_by_seconds`)
+4. **Deterministic identities and the `Report` recorder** for making whole scenarios reproducible and committable (`deterministic_keypair` / `ActorRegistry`, `create_token_mint_at`, `Report`)
 
 Each feature gets a section below: what it gave us, where it paid its way in this repo, and what fell out. The framing is "test quality as communication across domain experts" (auditor, instructor, future maintainer): each feature is evaluated by whether a non-author can read the test output and infer what actually happened.
 
@@ -136,19 +138,45 @@ Status: the timelock mitigation is planned, not landed. The current `test_lock_u
 
 ---
 
+## 4. Deterministic identities and the `Report` recorder
+
+The first three features make a *single run* legible. This one makes runs (snapshots) comparable *to each other*, which turns out to be a different problem with a different payoff.
+
+The structured-log traces in section 2 are readable, but they were unstable: the test fixtures minted keypairs with `Keypair::new()`, so every run produced fresh base58 addresses, and (because Anchor derives ATAs with `find_program_address`, whose bump-search length depends on the pubkeys' bit patterns) even the compute-unit numbers drifted by a few thousand per frame. That is fine for reading one trace on screen; it stops working the moment you want to *commit* a trace and diff it, because every run is a different diff and the real signal drowns in the churn.
+
+The fix is the one Ganache reached for in Ethereum: seed every keypair from a fixed secret so the addresses come out the same every time. (Ganache shipped a default mnemonic, `candy maple cake sugar pudding cream honey rich smooth crumble sweet treat`, that a generation of Truffle and Hardhat developers can still recite; our domain string plays exactly that role.) `deterministic_keypair(domain, role)` derives an ed25519 key from a fixed domain plus a role (`"authority"`, `"mint:x"`, `"actor:Alice"`), so "Alice" is the same address in every run, on every machine, forever. Keying off the *role* rather than an index matters: adding or reordering actors does not shift anyone's address, so a test you add today does not churn the trace of a test you wrote last week.
+
+A word on the derivation, since it is deliberately unglamorous: `role` is folded to 64 bits with FNV-1a and expanded to a 32-byte seed with splitmix64, no hashing-crate dependency. These are *not* an ecosystem standard the way BIP-39 mnemonics or `ed25519`-from-seed are; nothing outside this test harness ever needs to reproduce them, so they buy determinism and collision-freedom across role strings without buying a dependency or implying interoperability. They are throwaway test keys: no cryptographic strength is claimed or needed. (If a future consumer ever *does* need cross-tool reproducible keys, swapping the fold for a standard KDF is a one-function change; the `(domain, role)` interface stays.)
+
+Seeding the mints is the non-obvious part, and the one that makes it actually work. The pool's `Config` PDA derives from the mint pubkeys, and the vaults and LP mint derive from `Config`; so a random mint ripples through the entire address space of a pool. Pin the two mints and the whole derived tree is pinned with them. With that in place, two runs of the suite produce byte-identical traces, CU included.
+
+A subtlety worth stating, because it is exactly the kind of claim that is easy to oversell: deterministic CU is now reproducible, but it is reproducible *for the seeded test pubkeys*, whose bump-search lengths are not a production user's. So CU graduated from "ignore it, it's noise" to "watch it, a delta is a real behavioral change", without ever becoming "this is what it costs on mainnet". Determinism bought reproducibility; it did not, and could not, buy fidelity to an arbitrary user's exact compute cost. (This is the same reproducibility-versus-predictive-validity split the evaluation below leans on.)
+
+Determinism is the enabling condition; the `Report` recorder is what spends it. A `Report` is threaded through a test and narrates as the test runs: `step` and `note` carry intent (prose, the part that can drift from reality), while `snapshot` and `check` carry observed values (the part that can't, because they read the same numbers the assertions do). On `Drop` it writes one Markdown document per test to `target/md-reports/<slug>.md`, and `just test-md` concatenates them into a single committable `docs/testing/test-report.md`. Because the underlying identities are seeded, that file is byte-stable: a change in the report diff is a change in behavior, full stop. The split between the two channels is the whole point: the prose is the author's claim about what should happen, the snapshots and checks are what *did*, and putting them side by side is what lets a domain expert read a test as a specification and catch the test lying.
+
+Where `Report` complements rather than replaces: `print_markdown_pair()` (section 2) documents one *transaction*, its CPI tree and a Mermaid diagram; a `Report` documents one whole scenario, the intent and the before/after state and the pass/fail checks across however many transactions it takes. You use both: the per-transaction tree when a single instruction surprises you, the per-scenario report when you want the narrative.
+
+These four pieces (`deterministic_keypair`/`ActorRegistry`, `create_token_mint_at`, the `Report` recorder, and the `just test-md` convention) are not bespoke to this repo: they live in `anchor-litesvm` / `litesvm-utils` proper, and the same pattern drives the `01-vault` and `01-escrow` test suites. The house standard is written up in [`anchor-litesvm`'s `docs/CONVENTIONS.md`](https://github.com/cds-rs/anchor-litesvm/blob/feat/euler/docs/CONVENTIONS.md). That this AMM, a single-actor SOL vault, and a two-actor token escrow all read the same way is the evidence the design generalized rather than fitting one program.
+
+**N.B.** A committed, deterministic report is a test artifact a non-author can review *without running the suite*. That is the legibility thesis extended one step: not just "readable when you run it" but "readable in a pull request."
+
+One caveat, and it is a real one: because the label *is* the seed, two actors sharing a label silently become one address. The harness turns that footgun into an immediate panic (a label registry that rejects duplicates), with an escape hatch for the legitimate "give me a second handle to Alice" case. The cost is that you have to name your actors uniquely, which is a discipline, not a tax: it is the same discipline that makes the trace readable in the first place.
+
+---
+
 ## How does it hold up?
 
 You might already be asking: by what criteria? Good tests, in my experience, have four properties that come up over and over: they're **fast**, **deterministic**, **low-cost**, and **enabling**. Here's the read on anchor-litesvm against each, grounded in this repo.
 
-**Fast.** Solidly good. LiteSVM is in-process: no validator boot, no RPC round trips. The full suite (14 integration + 71 amm-math = 85 tests) runs in a few seconds once `cargo build-sbf` has produced the program binary. Bundle macros are compile-time only; the structured-log parser runs in microseconds per transaction. The slow link is `cargo build-sbf` itself, which is the Solana toolchain's problem, not anchor-litesvm's.
+**Fast.** Solidly good. LiteSVM is in-process: no validator boot, no RPC round trips. The full suite (37 integration + 71 amm-math = 108 tests) runs in a few seconds once `cargo build-sbf` has produced the program binary. Bundle macros are compile-time only; the structured-log parser runs in microseconds per transaction. The slow link is `cargo build-sbf` itself, which is the Solana toolchain's problem, not anchor-litesvm's.
 
 **Deterministic.** Solidly good, but the word does double duty here, and the two halves are worth separating: *reproducibility* (the test produces the same observations across runs) and *predictive validity* (those observations correspond to what production would do). A test that runs consistently green but doesn't model production fairly is deterministic-by-luck, not the property we want.
 
-*On reproducibility.* The things the tests actually assert on (token balances, `Config` field values, success or failure of an instruction, error codes like `PoolLocked` or `SlippageExceeded`, the *shape* of the CPI tree) are reproducible across runs. There is no randomness in LiteSVM's execution, no network flakes, no timing-sensitive constructs in the harness. The amm-math property tests use `proptest`, which is random by design, but it shrinks to a deterministic counter-example on failure and the same seed reproduces the same failure; the behavioral observation is still repeatable. The time-warp primitives are load-bearing on this axis specifically: without a controllable Clock, time-gated code is *not* deterministic in the meaningful sense (you can't make "the timelock fires after 24h" a repeatable test observation), and `warp_to_timestamp` is what brings that class of code under the determinism umbrella.
+*On reproducibility.* The things the tests actually assert on (token balances, `Config` field values, success or failure of an instruction, error codes like `PoolLocked` or `SlippageExceeded`, the *shape* of the CPI tree) are reproducible across runs. There is no randomness in LiteSVM's execution, no network flakes, no timing-sensitive constructs in the harness. The amm-math property tests use `proptest`, which is random by design, but it shrinks to a deterministic counter-example on failure and the same seed reproduces the same failure; the behavioral observation is still repeatable. The time-warp primitives are load-bearing on this axis specifically: without a controllable Clock, time-gated code is *not* deterministic in the meaningful sense (you can't make "the timelock fires after 24h" a repeatable test observation), and `warp_to_timestamp` is what brings that class of code under the determinism umbrella. Since the move to deterministic keypairs (section 4), reproducibility now extends past the *asserted* values to the *entire* captured trace, addresses and CU included, which is what makes the committed `test-report.md` diffable.
 
 *On predictive validity.* Those same asserts (balances, Config fields, error codes, CPI shape) also correspond one-to-one to what would change on mainnet. LiteSVM is a faithful in-process Solana VM (same instruction semantics, real SPL programs, real Anchor account validation), but it does not model multi-validator effects, the live fee market, transaction ordering under congestion, or program-loader nuances. The prediction is high-fidelity for everything *inside* a single transaction and silent on what happens *between* transactions. For this AMM, that is a fair trade: nothing in the AMM's correctness depends on inter-transaction physics. For a program whose correctness *does* depend on the leader schedule or validator-to-validator timing, the determinism story would need a different harness layered on top.
 
-**Low-cost.** This is where the macros pay rent (in leverage, not Lamports ya know). Bundle-as-actor collapses the per-instruction plumbing (account-list construction, Borsh encoding, discriminator) into a struct the IDE auto-completes and the compiler verifies. Adding a test for an existing instruction is "build a bundle, build an instruction, `send_ok`, assert"; adding one for a new instruction is one `Bundle` struct plus those same four lines. The fixture layer (`Pool`, `UserAccounts`, `Bootstrap`) is the one place real cost lives, and it amortizes across every test that touches the pool. Bootstrap cost (learning the world / alias pattern, registering names) is real but one-time per author.
+**Low-cost.** This is where the macros pay rent (in leverage, not Lamports ya know). Bundle-as-actor collapses the per-instruction plumbing (account-list construction, Borsh encoding, discriminator) into a struct the IDE auto-completes and the compiler verifies. Adding a test for an existing instruction is "build a bundle, build an instruction, `send_ok`, assert"; adding one for a new instruction is one `Bundle` struct plus those same four lines. The fixture layer (`Scenario`, `Pool`, `UserAccounts`) is the one place real cost lives, and it amortizes across every test that touches the pool. Setup cost (learning the scenario / alias pattern, registering names) is real but one-time per author.
 
 **Enabling.** Three concrete data points from this repo:
 
@@ -168,7 +196,7 @@ So, net read across the four axes: this is a meaningful improvement over a hand-
 
 ## What ties this together
 
-The common thread across all three features is not convenience; it is legibility. The bundle macros make instruction intent explicit at compile time. The structured logs make transaction execution visible at runtime. The time-warp primitives make temporal assumptions testable rather than aspirational. Each one moves a different layer of the test harness from "implicit in someone's head" to "explicit in a form a non-author can read." Convenience is the side effect; legibility is the point.
+The common thread across all four features is not convenience; it is legibility. The bundle macros make instruction intent explicit at compile time. The structured logs make transaction execution visible at runtime. The time-warp primitives make temporal assumptions testable rather than aspirational. Deterministic identities and the `Report` recorder make a whole scenario's behavior committable, so legibility survives into a pull-request diff. Each one moves a different layer of the test harness from "implicit in someone's head" to "explicit in a form a non-author can read." Convenience is the side effect; legibility is the point.
 
 ---
 
