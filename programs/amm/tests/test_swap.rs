@@ -8,7 +8,7 @@ mod common;
 
 use amm::SwapKind;
 use anchor_litesvm::TestHelpers;
-use common::{setup, SwapDir};
+use common::{setup, MarkdownCapture, SwapDir};
 
 #[test]
 fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
@@ -138,7 +138,7 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
             },
         )
         .send_err_named("SlippageExceeded")
-        .print_logs_structured();
+        .print_markdown_pair();
 
     // Bob's tokens never moved.
     assert_eq!(world.ctx.svm.token_balance(&bob.ata_x), bob_x_before);
@@ -172,5 +172,5 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
             },
         )
         .send_err_named("SlippageExceeded")
-        .print_logs_structured();
+        .print_markdown_pair();
 }

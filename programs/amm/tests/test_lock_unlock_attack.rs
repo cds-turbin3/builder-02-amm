@@ -37,7 +37,7 @@ mod common;
 
 use amm::{SwapBundle, SwapKind};
 use anchor_litesvm::{TestHelpers, TransactionHelpers};
-use common::{setup, SwapDir};
+use common::{setup, MarkdownCapture, SwapDir};
 
 #[test]
 fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
@@ -78,7 +78,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             },
         )
         .send_err_named("PoolLocked")
-        .print_logs_structured();
+        .print_markdown_pair();
 
     // Capture state before the attack tx.
     let admin_x_before = world.ctx.svm.token_balance(&admin.ata_x).unwrap();
@@ -130,7 +130,7 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin.signer])
         .unwrap()
         .with_aliases(aliases)
-        .print_logs_structured()
+        .print_markdown_pair()
         .assert_success();
 
     // ----- Step 4: the attack worked -----
@@ -175,5 +175,5 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
             },
         )
         .send_err_named("PoolLocked")
-        .print_logs_structured();
+        .print_markdown_pair();
 }
