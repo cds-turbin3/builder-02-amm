@@ -26,7 +26,7 @@
 //!     .tx(&[&user.signer])
 //!     .build(SwapBundle::from((&pool, &user)), instruction::Swap { kind, a_to_b: dir.a_to_b() })
 //!     .send_err_named("PoolLocked")
-//!     .print_logs_structured();
+//!     .print_markdown_pair();
 //! ```
 //!
 //! See `docs/testing/actors-as-first-class-citizens.md` for the
@@ -39,12 +39,46 @@ use amm::{
     AddLiquidityBundle, InitializeBundle, RemoveLiquidityBundle, SetLockedBundle, SwapBundle,
     SwapKind, UpdateAuthorityBundle, UpdateFeeBundle,
 };
-use anchor_litesvm::{AnchorContext, AnchorLiteSVM, Keypair, Pubkey, Signer, TestHelpers};
+use anchor_litesvm::{
+    AnchorContext, AnchorLiteSVM, Keypair, Pubkey, Signer, TestHelpers, TransactionResult,
+};
 
 // Pool and UserAccounts live in the program crate alongside the
 // bundles (BundleFrom needs that), but tests import them from the
 // usual `common::` path.
 pub use amm::test_helpers::{Pool, UserAccounts};
+
+/// Print a tx's structured log + Mermaid lifelines diagram, wrapped
+/// in README-ready markdown delimiters: the structured tree goes
+/// inside a ```console fence, the diagram goes inside a collapsed
+/// `<details>` element. Lets `cargo test --nocapture` produce output
+/// that drops straight into a markdown file.
+///
+/// Use this in place of `.print_logs_structured()` anywhere in this
+/// test suite. Verbs on `Scenario` call it on every send; tests with
+/// inline tx chains (negative paths) can import the trait and call
+/// `.print_markdown_pair()` directly.
+pub trait MarkdownCapture {
+    fn print_markdown_pair(self) -> Self;
+}
+
+impl MarkdownCapture for TransactionResult {
+    fn print_markdown_pair(self) -> Self {
+        self.tap(|_| println!("```console"))
+            .print_logs_structured()
+            .tap(|_| {
+                println!("```");
+                println!();
+                println!("<details><summary>Lifelines diagram</summary>");
+                println!();
+            })
+            .print_mermaid_with_lifelines()
+            .tap(|_| {
+                println!("</details>");
+                println!();
+            })
+    }
+}
 
 /// Compiled program bytes. Tests assume `cargo build-sbf -p amm` ran first;
 /// the justfile / pre-commit wraps that.
@@ -207,7 +241,7 @@ impl Scenario {
     //       .build(SwapBundle::from((&pool, &user)),
     //              amm::instruction::Swap { kind, a_to_b: dir.a_to_b() })
     //       .send_err_named("PoolLocked")
-    //       .print_logs_structured();
+    //       .print_markdown_pair();
 
     /// One-shot: mint an "Admin" actor, derive a pool at `seed=0`, run
     /// `initialize` with the admin as both initializer and authority.
@@ -248,7 +282,7 @@ impl Scenario {
                 },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 
     pub fn deposit(
@@ -270,7 +304,7 @@ impl Scenario {
                 },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 
     pub fn remove_liquidity(
@@ -292,7 +326,7 @@ impl Scenario {
                 },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 
     pub fn swap(&mut self, user: &UserAccounts, pool: &Pool, kind: SwapKind, dir: SwapDir) {
@@ -306,7 +340,7 @@ impl Scenario {
                 },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 
     pub fn set_locked(&mut self, admin: &UserAccounts, pool: &Pool, locked: bool) {
@@ -320,7 +354,7 @@ impl Scenario {
                 amm::instruction::SetLocked { locked },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 
     pub fn update_fee(&mut self, admin: &UserAccounts, pool: &Pool, new_fee_bps: u16) {
@@ -334,7 +368,7 @@ impl Scenario {
                 amm::instruction::UpdateFee { new_fee_bps },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 
     /// `Some(&new_admin)` rotates; `None` renounces.
@@ -356,6 +390,6 @@ impl Scenario {
                 },
             )
             .send_ok()
-            .print_logs_structured();
+            .print_markdown_pair();
     }
 }

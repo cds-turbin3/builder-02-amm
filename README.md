@@ -164,9 +164,1055 @@ The common thread across all three features is not convenience; it is legibility
 
 **Invariants.** Five program-level invariants (positivity; constant-product `new_k >= old_k`; pre-fee invariant; no-dilution on deposits; exact reserve identities). Property tests in `crates/amm-math/tests/` verify them over thousands of random inputs; the integration tests in `programs/amm/tests/` verify them across realistic instruction sequences. Full list in [`docs/design.md`](docs/design.md#invariants) with proofs in the spec.
 
-**Testing.** 14 integration tests (one file per scenario family) + 71 amm-math unit and property tests = 85 tests in the workspace. Architecture is the bundle-as-actor pattern documented in [`docs/testing.md`](docs/testing.md). Every test ends with `print_logs_structured(&world.aliases)` so a failing test's tree is the first thing you see.
+**Testing.** 14 integration tests (one file per scenario family) + 71 amm-math unit and property tests = 85 tests in the workspace. Architecture is the bundle-as-actor pattern documented in [`docs/testing.md`](docs/testing.md). On `feat/euler`, every verb ends with `print_markdown_pair()` (defined in [`tests/common/mod.rs`](programs/amm/tests/common/mod.rs)), which prints the structured CPI tree *and* a Mermaid sequence diagram with lifelines, both wrapped in README-ready markdown delimiters. So a failing test's tree is the first thing you see, and the same output drops straight into a markdown file for an issue or post-mortem.
 
 ---
+
+## Test scenarios in two views
+
+Four representative tests, each rendered two ways: the structured CPI tree (visible, from `print_logs_structured`) and a Mermaid sequence diagram with lifelines (collapsed in a `<details>`, from `print_mermaid_with_lifelines`). Both views come from the same captured transaction; the `MarkdownCapture` trait in [`programs/amm/tests/common/mod.rs`](programs/amm/tests/common/mod.rs) uses `.tap(...)` to interleave the markdown delimiters so that `cargo test --nocapture` produces output you can paste directly into a markdown file. The scenarios below were captured exactly that way.
+
+The four scenarios are: one happy-path tour of all four user-facing instructions, one user-side guardrail (slippage), one program-side guardrail (anti-inflation), and one vulnerability proof-of-concept (the lock/unlock timing attack discussed in [section 2 above](#2-structured-logging-print_logs_structured-and-aliases)). Together they exercise every Mermaid feature the renderer supports: lifelines for round-trip nesting, the `--x` failure return, the pink `rect rgb(...)` failure region, and Anchor's decoded error names (`SlippageExceeded`, `InsufficientLiquidity`, `PoolLocked`) instead of raw `custom program error: 0x<hex>`.
+
+### 1. Full pool lifecycle
+
+`test_lifecycle::lifecycle_conserves_tokens_across_users_and_vaults` (eight transactions). Two LPs deposit, two traders swap in both directions, then both LPs withdraw. The point: token conservation across all eight ixs. The sum of (user balances + vault balances) for each mint must equal the cumulative amount the test minted into the world; every deposit, swap, and withdraw redistributes, never creates or destroys. The diagrams below let you trace each redistribution one tx at a time.
+
+```console
+
+── amm::Initialize ─────────────────────────────────────────
+Transaction  signers=[Admin]
+└── amm::Initialize [1] ✓ 80420cu  signer=Admin
+    ├── System::CreateAccount [2] ✓ (no cu)
+    ├── Token::InitializeMint2 [2] ✓ 201cu
+    ├── AssociatedToken::Create [2] ✓ 15017cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── System::CreateAccount [2] ✓ (no cu)
+Compute Units (this run): 80420
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Admin = 3jmaVfHdnkDFWf5FretCphDkLmqbY5rqTRxtJJbKmpsV
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    participant System
+    participant Token
+    participant AssociatedToken
+    Admin ->>+ amm: Initialize
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm ->>+ Token: InitializeMint2
+    Token -->>- amm: ok (201cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (15017cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm -->>- Admin: ok (80420cu)
+```
+</details>
+
+```console
+
+── amm::AddLiquidity ───────────────────────────────────────
+Transaction  signers=[Alice]
+└── amm::AddLiquidity [1] ✓ 59935cu  signer=Alice
+    ├── AssociatedToken::Create [2] ✓ 14925cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::MintTo [2] ✓ 119cu
+    └── Token::MintTo [2] ✓ 119cu
+Compute Units (this run): 59935
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Alice = 3FYbVQfHbTUVzMGS2N4sma24T3Aou31E2Y3yHGuW2oLB
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Alice
+    participant amm
+    participant AssociatedToken
+    participant Token
+    participant System
+    Alice ->>+ amm: AddLiquidity
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (14925cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm -->>- Alice: ok (59935cu)
+```
+</details>
+
+```console
+
+── amm::Swap ───────────────────────────────────────────────
+Transaction  signers=[Carol]
+└── amm::Swap [1] ✓ 28116cu  signer=Carol
+    ├── Token::TransferChecked [2] ✓ 105cu
+    └── Token::TransferChecked [2] ✓ 105cu
+Compute Units (this run): 28116
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Carol = G7y81bVfx16WunobdizmdKwu4gbUJdCB6GcqRkBERi9A
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Carol
+    participant amm
+    participant Token
+    Carol ->>+ amm: Swap
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm -->>- Carol: ok (28116cu)
+```
+</details>
+
+```console
+
+── amm::AddLiquidity ───────────────────────────────────────
+Transaction  signers=[BobLP]
+└── amm::AddLiquidity [1] ✓ 52129cu  signer=BobLP
+    ├── AssociatedToken::Create [2] ✓ 13416cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    └── Token::MintTo [2] ✓ 119cu
+Compute Units (this run): 52129
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  BobLP = 5obVwfGc3QiCTYvUWnTNwJrCYxQYwD4qKkzbsP5sg6WS
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant BobLP
+    participant amm
+    participant AssociatedToken
+    participant Token
+    participant System
+    BobLP ->>+ amm: AddLiquidity
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13416cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm -->>- BobLP: ok (52129cu)
+```
+</details>
+
+```console
+
+── amm::Swap ───────────────────────────────────────────────
+Transaction  signers=[Dan]
+└── amm::Swap [1] ✓ 26614cu  signer=Dan
+    ├── Token::TransferChecked [2] ✓ 105cu
+    └── Token::TransferChecked [2] ✓ 105cu
+Compute Units (this run): 26614
+Fee: 5000 lamports
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Dan = By8FxALa3kcjVZ5dvrpSX4bGErUzsQ5DeLqWBjsddwiV
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Dan
+    participant amm
+    participant Token
+    Dan ->>+ amm: Swap
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm -->>- Dan: ok (26614cu)
+```
+</details>
+
+```console
+
+── amm::Swap ───────────────────────────────────────────────
+Transaction  signers=[Carol]
+└── amm::Swap [1] ✓ 28116cu  signer=Carol
+    ├── Token::TransferChecked [2] ✓ 105cu
+    └── Token::TransferChecked [2] ✓ 105cu
+Compute Units (this run): 28116
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Carol = G7y81bVfx16WunobdizmdKwu4gbUJdCB6GcqRkBERi9A
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Carol
+    participant amm
+    participant Token
+    Carol ->>+ amm: Swap
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm -->>- Carol: ok (28116cu)
+```
+</details>
+
+```console
+
+── amm::RemoveLiquidity ────────────────────────────────────
+Transaction  signers=[Alice]
+└── amm::RemoveLiquidity [1] ✓ 34583cu  signer=Alice
+    ├── Token::Burn [2] ✓ 123cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    └── Token::TransferChecked [2] ✓ 105cu
+Compute Units (this run): 34583
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Alice = 3FYbVQfHbTUVzMGS2N4sma24T3Aou31E2Y3yHGuW2oLB
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Alice
+    participant amm
+    participant Token
+    Alice ->>+ amm: RemoveLiquidity
+    amm ->>+ Token: Burn
+    Token -->>- amm: ok (123cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm -->>- Alice: ok (34583cu)
+```
+</details>
+
+```console
+
+── amm::RemoveLiquidity ────────────────────────────────────
+Transaction  signers=[BobLP]
+└── amm::RemoveLiquidity [1] ✓ 31583cu  signer=BobLP
+    ├── Token::Burn [2] ✓ 123cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    └── Token::TransferChecked [2] ✓ 105cu
+Compute Units (this run): 31583
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  BobLP = 5obVwfGc3QiCTYvUWnTNwJrCYxQYwD4qKkzbsP5sg6WS
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant BobLP
+    participant amm
+    participant Token
+    BobLP ->>+ amm: RemoveLiquidity
+    amm ->>+ Token: Burn
+    Token -->>- amm: ok (123cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm -->>- BobLP: ok (31583cu)
+```
+</details>
+
+
+---
+
+### 2. Slippage protection (user-side guardrail)
+
+`test_swap::exact_input_swap_rejects_when_amount_out_below_min` (three transactions; pool setup succeeds, then the failing swap). Bob asks for at least 500 Y from an exact-input swap that would actually deliver 360 Y at current reserves. The handler rejects with `SlippageExceeded` before any token moves. Note the failed `Swap` diagram has no child Token CPIs at all: the slippage check fires before any transfer would.
+
+```console
+
+── amm::Initialize ─────────────────────────────────────────
+Transaction  signers=[Admin]
+└── amm::Initialize [1] ✓ 77420cu  signer=Admin
+    ├── System::CreateAccount [2] ✓ (no cu)
+    ├── Token::InitializeMint2 [2] ✓ 201cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── System::CreateAccount [2] ✓ (no cu)
+Compute Units (this run): 77420
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Admin = HT53dJcJgcyiaaa5g1bbhU1ESc7eXhW14UNiJcNSJoEq
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    participant System
+    participant Token
+    participant AssociatedToken
+    Admin ->>+ amm: Initialize
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm ->>+ Token: InitializeMint2
+    Token -->>- amm: ok (201cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm -->>- Admin: ok (77420cu)
+```
+</details>
+
+```console
+
+── amm::AddLiquidity ───────────────────────────────────────
+Transaction  signers=[LP]
+└── amm::AddLiquidity [1] ✓ 62957cu  signer=LP
+    ├── AssociatedToken::Create [2] ✓ 16416cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::MintTo [2] ✓ 119cu
+    └── Token::MintTo [2] ✓ 119cu
+Compute Units (this run): 62957
+Fee: 5000 lamports
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  LP  = 352wLgBtTrAdP8RDMFZdCNQi9MCNjajcs8PN7WMYnyx4
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant LP
+    participant amm
+    participant AssociatedToken
+    participant Token
+    participant System
+    LP ->>+ amm: AddLiquidity
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (16416cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm -->>- LP: ok (62957cu)
+```
+</details>
+
+```console
+
+── amm::Swap ───────────────────────────────────────────────
+Transaction  signers=[Bob]
+└── amm::Swap [1] ✗ 24040cu  signer=Bob
+    └── Error: SlippageExceeded
+Error: InstructionError(0, Custom(6009))
+Compute Units (this run): 24040
+Fee: 5000 lamports
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Bob = Cb2g9R5zhVAsAtzpZmKKcZzRP1Wqy7EEj8Pd7vDgoRyR
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Bob
+    participant amm
+    Bob ->>+ amm: Swap
+    rect rgb(255, 220, 220)
+    amm --x Bob: ✗ SlippageExceeded (24040cu)
+    end
+```
+</details>
+
+
+---
+
+### 3. Inflation-attack defense (program-side guardrail)
+
+`test_inflation_attack::first_deposit_at_or_below_minimum_liquidity_rejects` (two sub-cases, each a fresh pool + a rejecting first deposit). `MINIMUM_LIQUIDITY = 1000` guards against the classic LP-share inflation attack on the *first* deposit (a malicious depositor pre-donating a tiny amount, then having the next "real" depositor's share diluted to dust). The test pokes the boundary in two ways: (1, 1) deposit below threshold and (1000, 1000) deposit exactly at threshold. The spec requires `minted > MINIMUM_LIQUIDITY` strictly, so both reject. Both failures show the same `InsufficientLiquidity` shape; the math errored before any token movement.
+
+```console
+
+── amm::Initialize ─────────────────────────────────────────
+Transaction  signers=[Admin]
+└── amm::Initialize [1] ✓ 77420cu  signer=Admin
+    ├── System::CreateAccount [2] ✓ (no cu)
+    ├── Token::InitializeMint2 [2] ✓ 201cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── System::CreateAccount [2] ✓ (no cu)
+Compute Units (this run): 77420
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Admin = 3q67UyZGb4SjuK5xLXA1rfPAm9p2UCSpnddCc3y7J63o
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    participant System
+    participant Token
+    participant AssociatedToken
+    Admin ->>+ amm: Initialize
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm ->>+ Token: InitializeMint2
+    Token -->>- amm: ok (201cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm -->>- Admin: ok (77420cu)
+```
+</details>
+
+```console
+
+── amm::AddLiquidity ───────────────────────────────────────
+Transaction  signers=[Alice]
+└── amm::AddLiquidity [1] ✗ 47214cu  signer=Alice
+    ├── AssociatedToken::Create [2] ✓ 13416cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── Error: InsufficientLiquidity
+Error: InstructionError(0, Custom(6007))
+Compute Units (this run): 47214
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Alice = HNg4nCFvp9VAyviFrYZ85RdsMFzwWQarkarQjJJoDfxJ
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Alice
+    participant amm
+    participant AssociatedToken
+    participant Token
+    participant System
+    Alice ->>+ amm: AddLiquidity
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13416cu)
+    rect rgb(255, 220, 220)
+    amm --x Alice: ✗ InsufficientLiquidity (47214cu)
+    end
+```
+</details>
+
+```console
+
+── amm::Initialize ─────────────────────────────────────────
+Transaction  signers=[Admin]
+└── amm::Initialize [1] ✓ 77420cu  signer=Admin
+    ├── System::CreateAccount [2] ✓ (no cu)
+    ├── Token::InitializeMint2 [2] ✓ 201cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── System::CreateAccount [2] ✓ (no cu)
+Compute Units (this run): 77420
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Admin = 59Nvu7UxdyWEeV47P4YsZyxnpfTQauVRKYPpPntwC6xu
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    participant System
+    participant Token
+    participant AssociatedToken
+    Admin ->>+ amm: Initialize
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm ->>+ Token: InitializeMint2
+    Token -->>- amm: ok (201cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm -->>- Admin: ok (77420cu)
+```
+</details>
+
+```console
+
+── amm::AddLiquidity ───────────────────────────────────────
+Transaction  signers=[Alice]
+└── amm::AddLiquidity [1] ✗ 50234cu  signer=Alice
+    ├── AssociatedToken::Create [2] ✓ 14916cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── Error: InsufficientLiquidity
+Error: InstructionError(0, Custom(6007))
+Compute Units (this run): 50234
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Alice = FrV8Q4vZt2UGPQG9QUtQKZy64tenMFKmKjo79mSZvZvC
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Alice
+    participant amm
+    participant AssociatedToken
+    participant Token
+    participant System
+    Alice ->>+ amm: AddLiquidity
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (14916cu)
+    rect rgb(255, 220, 220)
+    amm --x Alice: ✗ InsufficientLiquidity (50234cu)
+    end
+```
+</details>
+
+
+---
+
+### 4. Sandwich attack: lock/unlock timing PoC
+
+`test_lock_unlock_attack::admin_atomically_unlocks_swaps_and_relocks_while_users_blocked` (six transactions; this is the vulnerability PoC from [section 2 above](#2-structured-logging-print_logs_structured-and-aliases), now in full). Bob's first swap fails with `PoolLocked` (frame 4 in the list below). The admin's three-instruction atomic transaction (`unlock` / `swap` / `relock`) succeeds (frame 5; note this one has no `── amm::Foo ──` header, just `Transaction signers=[Admin]` followed by the tree, because it's a multi-ix batch). Bob's second swap fails again with `PoolLocked` (frame 6): the lock window opened and closed atomically without any other user landing a slot inside it. This test currently passes; the planned timelock mitigation ([response doc](docs/security/responses/001-lock-unlock-timing-attack.md)) will make the admin's atomic tx fail.
+
+```console
+
+── amm::Initialize ─────────────────────────────────────────
+Transaction  signers=[Admin]
+└── amm::Initialize [1] ✓ 86420cu  signer=Admin
+    ├── System::CreateAccount [2] ✓ (no cu)
+    ├── Token::InitializeMint2 [2] ✓ 201cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 18017cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── AssociatedToken::Create [2] ✓ 13517cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    └── System::CreateAccount [2] ✓ (no cu)
+Compute Units (this run): 86420
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Admin = Ax66ujynKt7ajctBDmSAXW1M3kf7evKRH87WsBDMRNCo
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    participant System
+    participant Token
+    participant AssociatedToken
+    Admin ->>+ amm: Initialize
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm ->>+ Token: InitializeMint2
+    Token -->>- amm: ok (201cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (18017cu)
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13517cu)
+    amm ->>+ System: CreateAccount
+    System -->>- amm: ok
+    amm -->>- Admin: ok (86420cu)
+```
+</details>
+
+```console
+
+── amm::AddLiquidity ───────────────────────────────────────
+Transaction  signers=[Alice]
+└── amm::AddLiquidity [1] ✓ 66121cu  signer=Alice
+    ├── AssociatedToken::Create [2] ✓ 13416cu
+    │   ├── Token::GetAccountDataSize [3] ✓ 183cu
+    │   ├── System::CreateAccount [3] ✓ (no cu)
+    │   ├── Token::InitializeImmutableOwner [3] ✓ 38cu
+    │   └── Token::InitializeAccount3 [3] ✓ 235cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::TransferChecked [2] ✓ 105cu
+    ├── Token::MintTo [2] ✓ 119cu
+    └── Token::MintTo [2] ✓ 119cu
+Compute Units (this run): 66121
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Alice = 9N9rTRhfo6SbQkJKhoZ9AaUA1tr2nXPxvAghhBJRMwXG
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Alice
+    participant amm
+    participant AssociatedToken
+    participant Token
+    participant System
+    Alice ->>+ amm: AddLiquidity
+    amm ->>+ AssociatedToken: Create
+    AssociatedToken ->>+ Token: GetAccountDataSize
+    Token -->>- AssociatedToken: ok (183cu)
+    AssociatedToken ->>+ System: CreateAccount
+    System -->>- AssociatedToken: ok
+    AssociatedToken ->>+ Token: InitializeImmutableOwner
+    Token -->>- AssociatedToken: ok (38cu)
+    AssociatedToken ->>+ Token: InitializeAccount3
+    Token -->>- AssociatedToken: ok (235cu)
+    AssociatedToken -->>- amm: ok (13416cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm ->>+ Token: MintTo
+    Token -->>- amm: ok (119cu)
+    amm -->>- Alice: ok (66121cu)
+```
+</details>
+
+```console
+
+── amm::SetLocked ──────────────────────────────────────────
+Transaction  signers=[Admin]
+└── amm::SetLocked [1] ✓ 4079cu  signer=Admin
+Compute Units (this run): 4079
+Fee: 5000 lamports
+Legend (2):
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Admin = Ax66ujynKt7ajctBDmSAXW1M3kf7evKRH87WsBDMRNCo
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    Admin ->>+ amm: SetLocked
+    amm -->>- Admin: ok (4079cu)
+```
+</details>
+
+```console
+
+── amm::Swap ───────────────────────────────────────────────
+Transaction  signers=[Bob]
+└── amm::Swap [1] ✗ 32414cu  signer=Bob
+    └── Error: PoolLocked
+Error: InstructionError(0, Custom(6008))
+Compute Units (this run): 32414
+Fee: 5000 lamports
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Bob = CXLJCdy5jUvU9Um3aT5bD6U77o7cdsAJ3P7WDPXbcFbq
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Bob
+    participant amm
+    Bob ->>+ amm: Swap
+    rect rgb(255, 220, 220)
+    amm --x Bob: ✗ PoolLocked (32414cu)
+    end
+```
+</details>
+
+```console
+
+Transaction  signers=[Admin]
+├── amm::SetLocked [1] ✓ 4081cu  signer=Admin
+├── amm::Swap [1] ✓ 31115cu  signer=Admin
+│   ├── Token::TransferChecked [2] ✓ 105cu
+│   └── Token::TransferChecked [2] ✓ 105cu
+└── amm::SetLocked [1] ✓ 4079cu  signer=Admin
+Compute Units (this run): 39275
+Fee: 5000 lamports
+Legend (2):
+  Admin = Ax66ujynKt7ajctBDmSAXW1M3kf7evKRH87WsBDMRNCo
+  amm   = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Admin
+    participant amm
+    participant Token
+    Admin ->>+ amm: SetLocked
+    amm -->>- Admin: ok (4081cu)
+    Admin ->>+ amm: Swap
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm ->>+ Token: TransferChecked
+    Token -->>- amm: ok (105cu)
+    amm -->>- Admin: ok (31115cu)
+    Admin ->>+ amm: SetLocked
+    amm -->>- Admin: ok (4079cu)
+```
+</details>
+
+```console
+
+── amm::Swap ───────────────────────────────────────────────
+Transaction  signers=[Bob]
+└── amm::Swap [1] ✗ 32414cu  signer=Bob
+    └── Error: PoolLocked
+Error: InstructionError(0, Custom(6008))
+Compute Units (this run): 32414
+Fee: 5000 lamports
+Legend (2):
+  amm = CYbYnHW7SsnjGya616UuSintpEdezzJZCZuLZT6f2yf5
+  Bob = CXLJCdy5jUvU9Um3aT5bD6U77o7cdsAJ3P7WDPXbcFbq
+```
+
+<details><summary>Lifelines diagram</summary>
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Bob
+    participant amm
+    Bob ->>+ amm: Swap
+    rect rgb(255, 220, 220)
+    amm --x Bob: ✗ PoolLocked (32414cu)
+    end
+```
+</details>
 
 ## Running
 

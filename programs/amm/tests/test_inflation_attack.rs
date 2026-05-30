@@ -21,7 +21,7 @@
 mod common;
 
 use anchor_litesvm::TestHelpers;
-use common::setup;
+use common::{setup, MarkdownCapture};
 
 /// MINIMUM_LIQUIDITY = 1000. With (1, 1), sqrt(1) = 1 <= 1000. With
 /// (1000, 1000), sqrt(1_000_000) = 1000 == MINIMUM_LIQUIDITY (boundary).
@@ -48,7 +48,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
                 },
             )
             .send_err_named("InsufficientLiquidity")
-            .print_logs_structured();
+            .print_markdown_pair();
 
         // Alice's tokens never moved.
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
@@ -77,7 +77,7 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
                 },
             )
             .send_err_named("InsufficientLiquidity")
-            .print_logs_structured();
+            .print_markdown_pair();
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_x), Some(1_000_000));
         assert_eq!(world.ctx.svm.token_balance(&alice.ata_y), Some(1_000_000));
     }
@@ -163,7 +163,7 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
             },
         )
         .send_err_named("InsufficientLiquidity")
-        .print_logs_structured();
+        .print_markdown_pair();
 
     // Token state rolls back: Henry's X/Y balances are exactly what they were.
     assert_eq!(world.ctx.svm.token_balance(&henry.ata_x), henry_x_before);
