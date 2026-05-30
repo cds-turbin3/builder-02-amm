@@ -21,7 +21,7 @@
 mod common;
 
 use anchor_litesvm::TestHelpers;
-use common::{setup, MarkdownCapture};
+use common::setup;
 
 /// MINIMUM_LIQUIDITY = 1000. With (1, 1), sqrt(1) = 1 <= 1000. With
 /// (1000, 1000), sqrt(1_000_000) = 1000 == MINIMUM_LIQUIDITY (boundary).
