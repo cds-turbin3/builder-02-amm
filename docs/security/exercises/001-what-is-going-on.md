@@ -9,7 +9,7 @@ You're looking at the captured `print_logs_structured()` output from running a s
 - Admin instructions are *not* gated by `locked`; the authority can always call them. (This carve-out exists so a locked-and-renounced pool can't get permanently stuck.)
 - SPL Token's `TransferChecked` moves a balance from one token account to another, signed by the source's authority.
 - `print_logs_structured()` shows one tree per transaction, with `[N]` indicating CPI stack depth and `✓` / `✗` for success / failure. The number next to each frame is the cumulative CU consumed by that frame and its CPI subtree, so a root frame's CU equals the transaction's total; the footer repeats that total as `Compute Units` and gives the transaction `Fee`. Failed frames render two children inside the frame subtree: a raw `Error: custom program error: 0x<code>` line and an `AnchorError thrown in <path>:<line>` block carrying the decoded `Error Code` / `Number` / `Message`; the trailing `Error: InstructionError(<ix_index>, Custom(<code>))` sits below the tree at the transaction level.
-- The `Compute Units` numbers in the trace below are illustrative, not normative<sup>*</sup>. Reason from the trees' *shapes* and approximate magnitudes, not the exact numbers.
+- The `Compute Units` numbers in the trace below are a historical capture, illustrative and not normative<sup>*</sup>. Reason from the trees' *shapes* and approximate magnitudes, not the exact numbers.
 
 Three actors appear in this test:
 
@@ -185,34 +185,40 @@ The vulnerability is invisible in plain Solana log strings: there, it's "Program
 
 ### How the test made this concrete
 
-The test that produced this output is `programs/amm/tests/test_lock_unlock_attack.rs`. Its critical assertion is:
+The test that produced this output is `programs/amm/tests/test_lock_unlock_attack.rs`
+(`admin_atomically_unlocks_swaps_and_relocks_while_users_blocked`). Its critical
+assertion is:
 
 ```rust
-let r = world
+let attack = world
     .ctx
     .svm
-    .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin])
-    .unwrap();
-r.print_logs_structured(&world.aliases);
-assert!(
-    r.is_success(),
-    "the three-ix atomic tx is currently allowed; this is the bug"
+    .send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], &[&admin.signer])
+    .unwrap()
+    .with_aliases(aliases);
+md.block(
+    "the atomic attack transaction",
+    MarkdownBlock::Fenced { lang: "console".into(), body: attack.logs_structured_string() },
 );
+// This succeeds today, which is the bug: the attack lands.
+md.check("the atomic attack succeeds (this is the bug)", true, attack.is_success());
 ```
 
-The test *passes*, which is the bug. A passing test for an attack the spec implicitly forbids is the on-chain demonstration that the implementation diverged from the spec's intent. The fix is in `docs/security/responses/001-lock-unlock-timing-attack.md`: introduce a timelock on unlock so [C]'s middle frame fails with `PoolLocked` (because the unlock hasn't taken effect yet), which causes the entire 3-ix transaction to roll back atomically and the attack vector to close.
+The check passes, which is the bug. A passing test for an attack the spec implicitly forbids is the on-chain demonstration that the implementation diverged from the spec's intent. The fix is in `docs/security/responses/001-lock-unlock-timing-attack.md`: introduce a timelock on unlock so [C]'s middle frame fails with `PoolLocked` (because the unlock hasn't taken effect yet), which causes the entire 3-ix transaction to roll back atomically and the attack vector to close.
 
 </details>
 
-## <sup>*</sup> Why CU values drift between runs
+## <sup>*</sup> Why CU values in this trace are a historical capture (and once drifted)
 
-Solana's compute-unit consumption is deterministic per execution: given the same binary, same accounts, and same instruction data, you get the same CU. The trace above looks reproducible, but it isn't, because the inputs aren't held fixed across test runs.
+The CU numbers in the trace above are a *captured snapshot*, not values you will reproduce verbatim today, for a reason that is itself a determinism lesson worth the detour.
 
-The drift comes from Anchor's account validation. Constraints like `associated_token::mint = ..., associated_token::authority = ...` call `find_program_address` to derive the ATA at validation time. `find_program_address` iterates bumps from 255 downward until it finds an off-curve key; the iteration count varies from 1 to ~50+ depending on the participating pubkeys' bit patterns, and each iteration costs CU. So an instruction that validates ATAs consumes a different amount of CU each time those ATAs are derived from different mints or different user keypairs.
+Solana's compute-unit consumption is deterministic per execution: given the same binary, same accounts, and same instruction data, you get the same CU. But "same accounts" is the catch. The trace above was captured when the test fixtures used `Keypair::new()` (OS-random) for mints and users, so the *inputs* weren't held fixed, and the CU drifted run to run.
 
-The test fixtures here use `Keypair::new()` (OS-random) for mints and users, so each run generates fresh pubkeys, those pubkeys produce different ATA bumps, and the per-frame CU drifts by a few thousand. Frames that don't validate ATAs (`set_locked` at ~4,080 CU; the bookend frames of the attack tx) are stable. Frames that do (`add_liquidity`, `swap`, all the failure paths through the swap handler) float.
+The drift came from Anchor's account validation. Constraints like `associated_token::mint = ..., associated_token::authority = ...` call `find_program_address` to derive the ATA at validation time. `find_program_address` iterates bumps from 255 downward until it finds an off-curve key; the iteration count varies from 1 to ~50+ depending on the participating pubkeys' bit patterns, and each iteration costs CU. Random pubkeys each run meant different bump-search lengths, hence different CU. Frames that don't validate ATAs (`set_locked` at ~4,080 CU; the bookend frames of the attack tx) were stable; frames that do (`add_liquidity`, `swap`, the failure paths through the swap handler) floated by a few thousand.
 
-For background on the deterministic-fixture approach we considered and rejected (because it would have narrowed test coverage to one specific bump path), see the discussion captured in the project's `NOTES`.
+That drift is now gone. The harness was switched to *deterministic* keypairs (each one seeded from a fixed domain + role string, so "Admin" and the mints derive the same pubkeys every run), which fixes the inputs, which fixes the bump searches, which fixes the CU. Two runs now produce byte-identical traces, including CU. (This is the inverse of an approach once considered and set aside for fear it would pin tests to "one specific bump path"; in practice, seeding the *identities* rather than asserting on the bumps gives reproducibility with no loss of coverage, and the committed test report diffs cleanly as a result.)
+
+So the right way to read the CU above: it is a real capture from a real run, kept here as the historical artifact that surfaced the bug, but the exact magnitudes belong to that run's (random) keypairs. Reason from the trees' *shapes* and approximate magnitudes. And note the subtler point the fix exposes: even now that CU is reproducible, it is reproducible *for the seeded test pubkeys*, whose bump-search lengths are not a production user's. CU is a clean diff signal (a change means a real behavioral change) without being a production CU prediction. Determinism bought reproducibility; it did not, and could not, buy fidelity to an arbitrary mainnet user's exact compute cost.
 
 ## See also
 
