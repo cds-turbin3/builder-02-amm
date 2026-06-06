@@ -64,14 +64,20 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .build(
             SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactInput { amount_in: 10_000, min_amount_out: 1 },
+                kind: SwapKind::ExactInput {
+                    amount_in: 10_000,
+                    min_amount_out: 1,
+                },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
         .send_err_named("PoolLocked");
     md.block(
         "Bob blocked (pre-attack)",
-        MarkdownBlock::Fenced { lang: "console".into(), body: bob_blocked.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: bob_blocked.logs_structured_string(),
+        },
     );
 
     let admin_x_before = world.ctx.svm.token_balance(&admin.ata_x).unwrap();
@@ -88,18 +94,27 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
          Admin, no slot between them for anyone else to act.",
     );
     let unlock_ix = world.ctx.program().build_ix(
-        amm::SetLockedBundle { authority: admin.pubkey(), config: pool.config },
+        amm::SetLockedBundle {
+            authority: admin.pubkey(),
+            config: pool.config,
+        },
         amm::instruction::SetLocked { locked: false },
     );
     let admin_swap_ix = world.ctx.program().build_ix(
         SwapBundle::from((&pool, &admin)),
         amm::instruction::Swap {
-            kind: SwapKind::ExactInput { amount_in: 100_000, min_amount_out: 1 },
+            kind: SwapKind::ExactInput {
+                amount_in: 100_000,
+                min_amount_out: 1,
+            },
             a_to_b: true,
         },
     );
     let relock_ix = world.ctx.program().build_ix(
-        amm::SetLockedBundle { authority: admin.pubkey(), config: pool.config },
+        amm::SetLockedBundle {
+            authority: admin.pubkey(),
+            config: pool.config,
+        },
         amm::instruction::SetLocked { locked: true },
     );
 
@@ -115,20 +130,43 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .with_aliases(aliases);
     md.block(
         "the atomic attack transaction",
-        MarkdownBlock::Fenced { lang: "console".into(), body: attack.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: attack.logs_structured_string(),
+        },
     );
-    md.check("the atomic attack succeeds (this is the bug)", true, attack.is_success());
+    md.check(
+        "the atomic attack succeeds (this is the bug)",
+        true,
+        attack.is_success(),
+    );
 
     md.step("After: admin captured value; Alice's pool ratio moved with no chance to react");
     let admin_x_after = world.ctx.svm.token_balance(&admin.ata_x).unwrap();
     let admin_y_after = world.ctx.svm.token_balance(&admin.ata_y).unwrap();
-    md.check("admin paid exactly 100_000 X", admin_x_before - 100_000, admin_x_after);
-    md.check("admin received Y from the through-lock trade", true, admin_y_after > admin_y_before);
+    md.check(
+        "admin paid exactly 100_000 X",
+        admin_x_before - 100_000,
+        admin_x_after,
+    );
+    md.check(
+        "admin received Y from the through-lock trade",
+        true,
+        admin_y_after > admin_y_before,
+    );
 
     let vault_x_after = world.ctx.svm.token_balance(&pool.vault_x).unwrap();
     let vault_y_after = world.ctx.svm.token_balance(&pool.vault_y).unwrap();
-    md.check("vault_x absorbed the admin's input", vault_x_before + 100_000, vault_x_after);
-    md.check("vault_y paid out (ratio moved against Alice)", true, vault_y_after < vault_y_before);
+    md.check(
+        "vault_x absorbed the admin's input",
+        vault_x_before + 100_000,
+        vault_x_after,
+    );
+    md.check(
+        "vault_y paid out (ratio moved against Alice)",
+        true,
+        vault_y_after < vault_y_before,
+    );
 
     md.step("And Bob is locked out again on the far side of the window");
     md.note(
@@ -141,7 +179,10 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .build(
             SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactInput { amount_in: 5_000, min_amount_out: 1 },
+                kind: SwapKind::ExactInput {
+                    amount_in: 5_000,
+                    min_amount_out: 1,
+                },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
@@ -188,29 +229,45 @@ fn mallory_cannot_lock_or_unlock_a_pool_she_does_not_control() {
         .ctx
         .tx(&[&mallory.signer])
         .build(
-            amm::SetLockedBundle { authority: mallory.pubkey(), config: pool.config },
+            amm::SetLockedBundle {
+                authority: mallory.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::SetLocked { locked: true },
         )
         .send_err_named("Unauthorized");
     md.block(
         "lock attempt logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: lock_attempt.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: lock_attempt.logs_structured_string(),
+        },
     );
     let config: amm::Config = world.ctx.get_account(&pool.config).unwrap();
-    md.check("pool remains unlocked after Mallory's attempt", false, config.locked);
+    md.check(
+        "pool remains unlocked after Mallory's attempt",
+        false,
+        config.locked,
+    );
 
     md.step("Attack 2: Mallory tries to toggle the pool the other way (unlock)");
     let unlock_attempt = world
         .ctx
         .tx(&[&mallory.signer])
         .build(
-            amm::SetLockedBundle { authority: mallory.pubkey(), config: pool.config },
+            amm::SetLockedBundle {
+                authority: mallory.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::SetLocked { locked: false },
         )
         .send_err_named("Unauthorized");
     md.block(
         "unlock attempt logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: unlock_attempt.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: unlock_attempt.logs_structured_string(),
+        },
     );
 
     md.step("Verify: the real authority retains legitimate control (lock, then unlock)");
@@ -227,7 +284,10 @@ fn mallory_cannot_lock_or_unlock_a_pool_she_does_not_control() {
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactInput { amount_in: 100, min_amount_out: 1 },
+        SwapKind::ExactInput {
+            amount_in: 100,
+            min_amount_out: 1,
+        },
         SwapDir::AtoB,
     );
     md.snapshot("bob after swap", &world.observe_user(&bob, &pool));

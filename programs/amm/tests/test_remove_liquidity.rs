@@ -44,12 +44,36 @@ fn remove_returns_proportional_shares_and_leaves_lock_vault_intact() {
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("alice", &world.observe_user(&alice, &pool));
 
-    md.check("alice LP after burn", Some(500), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("alice X (10000 − 1000 + 250)", Some(9_250), world.ctx.svm.token_balance(&alice.ata_x));
-    md.check("alice Y (40000 − 4000 + 1000)", Some(37_000), world.ctx.svm.token_balance(&alice.ata_y));
-    md.check("vault_x decreased by share", Some(750), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y decreased by share", Some(3_000), world.ctx.svm.token_balance(&pool.vault_y));
-    md.check("lock vault untouched", Some(1_000), world.ctx.svm.token_balance(&pool.lp_vault));
+    md.check(
+        "alice LP after burn",
+        Some(500),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "alice X (10000 − 1000 + 250)",
+        Some(9_250),
+        world.ctx.svm.token_balance(&alice.ata_x),
+    );
+    md.check(
+        "alice Y (40000 − 4000 + 1000)",
+        Some(37_000),
+        world.ctx.svm.token_balance(&alice.ata_y),
+    );
+    md.check(
+        "vault_x decreased by share",
+        Some(750),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y decreased by share",
+        Some(3_000),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
+    md.check(
+        "lock vault untouched",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
 }
 
 /// Slippage protection: if `min_a` or `min_b` is higher than the math's
@@ -75,19 +99,34 @@ fn remove_liquidity_rejects_when_amount_below_min() {
         .tx(&[&alice.signer])
         .build(
             amm::RemoveLiquidityBundle::from((&pool, &alice)),
-            amm::instruction::RemoveLiquidity { lp_burn: 500, min_a: 300, min_b: 1_000 },
+            amm::instruction::RemoveLiquidity {
+                lp_burn: 500,
+                min_a: 300,
+                min_b: 1_000,
+            },
         )
         .send_err_named("SlippageExceeded");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: nothing moved");
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("alice", &world.observe_user(&alice, &pool));
-    md.check("alice LP unchanged", Some(1_000), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("vault_x unchanged", Some(1_000), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check(
+        "alice LP unchanged",
+        Some(1_000),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "vault_x unchanged",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
 }
 
 /// When the pool is locked, `remove_liquidity` must return `PoolLocked`.
@@ -112,16 +151,31 @@ fn remove_liquidity_rejects_when_pool_locked() {
         .tx(&[&alice.signer])
         .build(
             amm::RemoveLiquidityBundle::from((&pool, &alice)),
-            amm::instruction::RemoveLiquidity { lp_burn: 500, min_a: 0, min_b: 0 },
+            amm::instruction::RemoveLiquidity {
+                lp_burn: 500,
+                min_a: 0,
+                min_b: 0,
+            },
         )
         .send_err_named("PoolLocked");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: Alice's LP and the vaults are untouched");
     md.snapshot("pool", &world.observe_pool(&pool));
-    md.check("alice LP unchanged", Some(1_000), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("vault_x unchanged", Some(1_000), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check(
+        "alice LP unchanged",
+        Some(1_000),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "vault_x unchanged",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
 }

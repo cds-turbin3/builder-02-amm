@@ -45,19 +45,29 @@ fn swap_with_truncated_amount_in_returns_insufficient_output() {
         .build(
             amm::SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactInput { amount_in: 1, min_amount_out: 0 },
+                kind: SwapKind::ExactInput {
+                    amount_in: 1,
+                    min_amount_out: 0,
+                },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
         .send_err_named("InsufficientOutput");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: Bob's X is untouched");
     md.snapshot("bob", &world.observe_user(&bob, &pool));
-    md.check("bob X unmoved", Some(10), world.ctx.svm.token_balance(&bob.ata_x));
+    md.check(
+        "bob X unmoved",
+        Some(10),
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
 }
 
 /// All non-lock-vault LP is burned. After this, only `lp_vault` still
@@ -95,12 +105,36 @@ fn drain_to_minimum_liquidity_preserves_lock_vault_and_reserves() {
     md.step("After: Alice drained to 0 LP; lock vault and proportional reserves remain");
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("alice", &world.observe_user(&alice, &pool));
-    md.check("alice burned everything", Some(0), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("alice X (10000 − 1000 + 500)", Some(9_500), world.ctx.svm.token_balance(&alice.ata_x));
-    md.check("alice Y (40000 − 4000 + 2000)", Some(38_000), world.ctx.svm.token_balance(&alice.ata_y));
-    md.check("lock vault holds MINIMUM_LIQUIDITY", Some(1_000), world.ctx.svm.token_balance(&pool.lp_vault));
-    md.check("vault_x not drained to zero", Some(500), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y not drained to zero", Some(2_000), world.ctx.svm.token_balance(&pool.vault_y));
+    md.check(
+        "alice burned everything",
+        Some(0),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "alice X (10000 − 1000 + 500)",
+        Some(9_500),
+        world.ctx.svm.token_balance(&alice.ata_x),
+    );
+    md.check(
+        "alice Y (40000 − 4000 + 2000)",
+        Some(38_000),
+        world.ctx.svm.token_balance(&alice.ata_y),
+    );
+    md.check(
+        "lock vault holds MINIMUM_LIQUIDITY",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
+    md.check(
+        "vault_x not drained to zero",
+        Some(500),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y not drained to zero",
+        Some(2_000),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
 
     let bob = world.user("Bob", 1_000, 4_000);
     md.step("Verify: Bob re-bootstraps the drained pool with (500, 2000)");
@@ -111,5 +145,9 @@ fn drain_to_minimum_liquidity_preserves_lock_vault_and_reserves() {
     );
     world.deposit(&bob, &pool, 500, 2_000, 1_000);
     md.snapshot("bob", &world.observe_user(&bob, &pool));
-    md.check("bob re-bootstrapped the pool", Some(1_000), world.ctx.svm.token_balance(&bob.ata_lp(&pool.mint_lp)));
+    md.check(
+        "bob re-bootstrapped the pool",
+        Some(1_000),
+        world.ctx.svm.token_balance(&bob.ata_lp(&pool.mint_lp)),
+    );
 }

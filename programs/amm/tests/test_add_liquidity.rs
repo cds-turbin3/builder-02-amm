@@ -40,14 +40,24 @@ fn actor_refetches_the_same_identity_without_reminting() {
 
     // Re-fetch by label: same pubkey, same ATAs, no panic, no second mint.
     let alice_again = world.actor("Alice");
-    assert_eq!(alice.pubkey(), alice_again.pubkey(), "same derived identity");
+    assert_eq!(
+        alice.pubkey(),
+        alice_again.pubkey(),
+        "same derived identity"
+    );
     assert_eq!(alice.ata_x, alice_again.ata_x, "same X ATA");
     assert_eq!(alice.ata_y, alice_again.ata_y, "same Y ATA");
 
     // The handle is live: balances read through it match the original (a second
     // mint would have doubled these).
-    assert_eq!(world.ctx.svm.token_balance(&alice_again.ata_x), Some(10_000));
-    assert_eq!(world.ctx.svm.token_balance(&alice_again.ata_y), Some(40_000));
+    assert_eq!(
+        world.ctx.svm.token_balance(&alice_again.ata_x),
+        Some(10_000)
+    );
+    assert_eq!(
+        world.ctx.svm.token_balance(&alice_again.ata_y),
+        Some(40_000)
+    );
 }
 
 #[test]
@@ -75,12 +85,36 @@ fn first_deposit_mints_to_user_and_locks_minimum_liquidity() {
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("alice", &world.observe_user(&alice, &pool));
 
-    md.check("alice LP shares", Some(1_000), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("lp_vault holds MINIMUM_LIQUIDITY", Some(1_000), world.ctx.svm.token_balance(&pool.lp_vault));
-    md.check("vault_x absorbed deposit", Some(1_000), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y absorbed deposit", Some(4_000), world.ctx.svm.token_balance(&pool.vault_y));
-    md.check("alice X debited", Some(9_000), world.ctx.svm.token_balance(&alice.ata_x));
-    md.check("alice Y debited", Some(36_000), world.ctx.svm.token_balance(&alice.ata_y));
+    md.check(
+        "alice LP shares",
+        Some(1_000),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "lp_vault holds MINIMUM_LIQUIDITY",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
+    md.check(
+        "vault_x absorbed deposit",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y absorbed deposit",
+        Some(4_000),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
+    md.check(
+        "alice X debited",
+        Some(9_000),
+        world.ctx.svm.token_balance(&alice.ata_x),
+    );
+    md.check(
+        "alice Y debited",
+        Some(36_000),
+        world.ctx.svm.token_balance(&alice.ata_y),
+    );
 }
 
 #[test]
@@ -113,13 +147,41 @@ fn subsequent_deposit_uses_floor_min_formula() {
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("bob", &world.observe_user(&bob, &pool));
 
-    md.check("bob LP shares", Some(1_000), world.ctx.svm.token_balance(&bob.ata_lp(&pool.mint_lp)));
-    md.check("alice LP unchanged", Some(1_000), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("lp_vault unchanged", Some(1_000), world.ctx.svm.token_balance(&pool.lp_vault));
-    md.check("vault_x absorbed bob", Some(1_500), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y absorbed bob", Some(6_000), world.ctx.svm.token_balance(&pool.vault_y));
-    md.check("bob X debited", Some(4_500), world.ctx.svm.token_balance(&bob.ata_x));
-    md.check("bob Y debited", Some(18_000), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check(
+        "bob LP shares",
+        Some(1_000),
+        world.ctx.svm.token_balance(&bob.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "alice LP unchanged",
+        Some(1_000),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "lp_vault unchanged",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
+    md.check(
+        "vault_x absorbed bob",
+        Some(1_500),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y absorbed bob",
+        Some(6_000),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
+    md.check(
+        "bob X debited",
+        Some(4_500),
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
+    md.check(
+        "bob Y debited",
+        Some(18_000),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
 }
 
 #[test]
@@ -141,21 +203,40 @@ fn add_liquidity_rejects_when_lp_below_min() {
         .tx(&[&alice.signer])
         .build(
             amm::AddLiquidityBundle::from((&pool, &alice)),
-            amm::instruction::AddLiquidity { amount_a: 1_000, amount_b: 4_000, min_lp_tokens: 1_001 },
+            amm::instruction::AddLiquidity {
+                amount_a: 1_000,
+                amount_b: 4_000,
+                min_lp_tokens: 1_001,
+            },
         )
         .send_err_named("SlippageExceeded");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: rejection left every balance untouched");
     md.snapshot("alice", &world.observe_user(&alice, &pool));
     md.snapshot("pool", &world.observe_pool(&pool));
 
-    md.check("alice X unmoved", Some(10_000), world.ctx.svm.token_balance(&alice.ata_x));
-    md.check("alice Y unmoved", Some(40_000), world.ctx.svm.token_balance(&alice.ata_y));
-    md.check("vault_x still empty", Some(0), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check(
+        "alice X unmoved",
+        Some(10_000),
+        world.ctx.svm.token_balance(&alice.ata_x),
+    );
+    md.check(
+        "alice Y unmoved",
+        Some(40_000),
+        world.ctx.svm.token_balance(&alice.ata_y),
+    );
+    md.check(
+        "vault_x still empty",
+        Some(0),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
 }
 
 #[test]
@@ -179,18 +260,33 @@ fn add_liquidity_rejects_when_pool_locked() {
         .tx(&[&alice.signer])
         .build(
             amm::AddLiquidityBundle::from((&pool, &alice)),
-            amm::instruction::AddLiquidity { amount_a: 1_000, amount_b: 4_000, min_lp_tokens: 0 },
+            amm::instruction::AddLiquidity {
+                amount_a: 1_000,
+                amount_b: 4_000,
+                min_lp_tokens: 0,
+            },
         )
         .send_err_named("PoolLocked");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: nothing moved");
     md.snapshot("alice", &world.observe_user(&alice, &pool));
     md.snapshot("pool", &world.observe_pool(&pool));
 
-    md.check("alice X unmoved", Some(10_000), world.ctx.svm.token_balance(&alice.ata_x));
-    md.check("vault_x still empty", Some(0), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check(
+        "alice X unmoved",
+        Some(10_000),
+        world.ctx.svm.token_balance(&alice.ata_x),
+    );
+    md.check(
+        "vault_x still empty",
+        Some(0),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
 }

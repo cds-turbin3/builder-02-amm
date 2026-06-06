@@ -40,7 +40,10 @@ fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactInput { amount_in: 100, min_amount_out: 1 },
+        SwapKind::ExactInput {
+            amount_in: 100,
+            min_amount_out: 1,
+        },
         SwapDir::AtoB,
     );
 
@@ -48,10 +51,26 @@ fn exact_input_swap_a_to_b_moves_balances_and_grows_k() {
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("bob", &world.observe_user(&bob, &pool));
 
-    md.check("bob X (1000 − 100)", Some(900), world.ctx.svm.token_balance(&bob.ata_x));
-    md.check("bob Y received", Some(360), world.ctx.svm.token_balance(&bob.ata_y));
-    md.check("vault_x (1000 + 100)", Some(1_100), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y (4000 − 360)", Some(3_640), world.ctx.svm.token_balance(&pool.vault_y));
+    md.check(
+        "bob X (1000 − 100)",
+        Some(900),
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
+    md.check(
+        "bob Y received",
+        Some(360),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
+    md.check(
+        "vault_x (1000 + 100)",
+        Some(1_100),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y (4000 − 360)",
+        Some(3_640),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
 
     let k_pre = 1_000u128 * 4_000u128;
     let k_post = 1_100u128 * 3_640u128;
@@ -81,14 +100,25 @@ fn exact_output_swap_a_to_b_pays_calculated_input() {
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactOutput { amount_out: 360, max_amount_in: 100 },
+        SwapKind::ExactOutput {
+            amount_out: 360,
+            max_amount_in: 100,
+        },
         SwapDir::AtoB,
     );
 
     md.step("After: Bob paid exactly 100 X, received exactly 360 Y");
     md.snapshot("bob", &world.observe_user(&bob, &pool));
-    md.check("bob X (1000 − 100)", Some(900), world.ctx.svm.token_balance(&bob.ata_x));
-    md.check("bob Y == requested", Some(360), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check(
+        "bob X (1000 − 100)",
+        Some(900),
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
+    md.check(
+        "bob Y == requested",
+        Some(360),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
 }
 
 /// Mirror of `exact_input_swap_a_to_b_moves_balances_and_grows_k` in the
@@ -117,17 +147,36 @@ fn exact_input_swap_b_to_a_picks_reserves_in_reverse() {
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactInput { amount_in: 100, min_amount_out: 1 },
+        SwapKind::ExactInput {
+            amount_in: 100,
+            min_amount_out: 1,
+        },
         SwapDir::BtoA,
     );
 
     md.step("After: Bob paid 100 Y, received 24 X; reserves shifted in reverse");
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("bob", &world.observe_user(&bob, &pool));
-    md.check("bob Y (1000 − 100)", Some(900), world.ctx.svm.token_balance(&bob.ata_y));
-    md.check("bob X received", Some(24), world.ctx.svm.token_balance(&bob.ata_x));
-    md.check("vault_y (4000 + 100)", Some(4_100), world.ctx.svm.token_balance(&pool.vault_y));
-    md.check("vault_x (1000 − 24)", Some(976), world.ctx.svm.token_balance(&pool.vault_x));
+    md.check(
+        "bob Y (1000 − 100)",
+        Some(900),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
+    md.check(
+        "bob X received",
+        Some(24),
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
+    md.check(
+        "vault_y (4000 + 100)",
+        Some(4_100),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
+    md.check(
+        "vault_x (1000 − 24)",
+        Some(976),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
 }
 
 /// Slippage protection on exact-input: if the user's `min_amount_out` is
@@ -160,20 +209,34 @@ fn exact_input_swap_rejects_when_amount_out_below_min() {
         .build(
             amm::SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactInput { amount_in: 100, min_amount_out: 500 },
+                kind: SwapKind::ExactInput {
+                    amount_in: 100,
+                    min_amount_out: 500,
+                },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
         .send_err_named("SlippageExceeded");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: Bob's tokens never moved");
     md.snapshot("bob", &world.observe_user(&bob, &pool));
-    md.check("bob X unmoved", bob_x_before, world.ctx.svm.token_balance(&bob.ata_x));
-    md.check("bob Y still zero", Some(0), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check(
+        "bob X unmoved",
+        bob_x_before,
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
+    md.check(
+        "bob Y still zero",
+        Some(0),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
 }
 
 /// Slippage protection on exact-output: if the user's `max_amount_in` is
@@ -201,17 +264,31 @@ fn exact_output_swap_rejects_when_amount_in_above_max() {
         .build(
             amm::SwapBundle::from((&pool, &bob)),
             amm::instruction::Swap {
-                kind: SwapKind::ExactOutput { amount_out: 360, max_amount_in: 50 },
+                kind: SwapKind::ExactOutput {
+                    amount_out: 360,
+                    max_amount_in: 50,
+                },
                 a_to_b: SwapDir::AtoB.a_to_b(),
             },
         )
         .send_err_named("SlippageExceeded");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: Bob's tokens never moved");
-    md.check("bob X unmoved", Some(1_000), world.ctx.svm.token_balance(&bob.ata_x));
-    md.check("bob Y still zero", Some(0), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check(
+        "bob X unmoved",
+        Some(1_000),
+        world.ctx.svm.token_balance(&bob.ata_x),
+    );
+    md.check(
+        "bob Y still zero",
+        Some(0),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
 }

@@ -95,4 +95,3 @@ impl UserAccounts {
         get_associated_token_address(&self.signer.pubkey(), mint_lp)
     }
 }
-

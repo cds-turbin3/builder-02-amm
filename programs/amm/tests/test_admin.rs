@@ -81,13 +81,19 @@ fn update_authority_renounce_then_admin_calls_fail() {
         .ctx
         .tx(&[&admin.signer])
         .build(
-            amm::UpdateFeeBundle { authority: admin.pubkey(), config: pool.config },
+            amm::UpdateFeeBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::UpdateFee { new_fee_bps: 50 },
         )
         .send_err_named("AuthorityRenounced");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: fee unchanged");
@@ -113,13 +119,19 @@ fn unauthorized_signer_cannot_update_fee() {
         .ctx
         .tx(&[&attacker.signer])
         .build(
-            amm::UpdateFeeBundle { authority: attacker.pubkey(), config: pool.config },
+            amm::UpdateFeeBundle {
+                authority: attacker.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::UpdateFee { new_fee_bps: 1 },
         )
         .send_err_named("Unauthorized");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: fee remained at the initial value");
@@ -146,13 +158,19 @@ fn unauthorized_signer_cannot_set_locked() {
         .ctx
         .tx(&[&attacker.signer])
         .build(
-            amm::SetLockedBundle { authority: attacker.pubkey(), config: pool.config },
+            amm::SetLockedBundle {
+                authority: attacker.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::SetLocked { locked: true },
         )
         .send_err_named("Unauthorized");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: pool remained unlocked");
@@ -180,13 +198,19 @@ fn set_locked_after_renounce_fails() {
         .ctx
         .tx(&[&admin.signer])
         .build(
-            amm::SetLockedBundle { authority: admin.pubkey(), config: pool.config },
+            amm::SetLockedBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::SetLocked { locked: true },
         )
         .send_err_named("AuthorityRenounced");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: pool stayed unlocked");
@@ -215,18 +239,30 @@ fn unauthorized_signer_cannot_update_authority() {
         .ctx
         .tx(&[&attacker.signer])
         .build(
-            amm::UpdateAuthorityBundle { authority: attacker.pubkey(), config: pool.config },
-            amm::instruction::UpdateAuthority { new_authority: Some(attacker.pubkey()) },
+            amm::UpdateAuthorityBundle {
+                authority: attacker.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateAuthority {
+                new_authority: Some(attacker.pubkey()),
+            },
         )
         .send_err_named("Unauthorized");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: authority unchanged");
     let config: Config = world.ctx.get_account(&pool.config).unwrap();
-    md.check("authority still admin", Some(admin.pubkey()), config.authority);
+    md.check(
+        "authority still admin",
+        Some(admin.pubkey()),
+        config.authority,
+    );
 }
 
 /// Once renounced, `update_authority` itself becomes uncallable: the
@@ -251,13 +287,21 @@ fn update_authority_after_renounce_fails() {
         .ctx
         .tx(&[&admin.signer])
         .build(
-            amm::UpdateAuthorityBundle { authority: admin.pubkey(), config: pool.config },
-            amm::instruction::UpdateAuthority { new_authority: Some(admin.pubkey()) },
+            amm::UpdateAuthorityBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateAuthority {
+                new_authority: Some(admin.pubkey()),
+            },
         )
         .send_err_named("AuthorityRenounced");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: authority is still None");
@@ -296,13 +340,20 @@ fn update_fee_propagates_to_next_swap() {
     world.swap(
         &bob,
         &pool,
-        SwapKind::ExactInput { amount_in: 100, min_amount_out: 1 },
+        SwapKind::ExactInput {
+            amount_in: 100,
+            min_amount_out: 1,
+        },
         SwapDir::AtoB,
     );
 
     md.step("After: swap used the new fee");
     md.snapshot("bob", &world.observe_user(&bob, &pool));
-    md.check("bob Y reflects 1000 bps fee (not 360)", Some(330), world.ctx.svm.token_balance(&bob.ata_y));
+    md.check(
+        "bob Y reflects 1000 bps fee (not 360)",
+        Some(330),
+        world.ctx.svm.token_balance(&bob.ata_y),
+    );
 }
 
 /// `update_authority` transfers admin privilege: the new authority can
@@ -336,13 +387,19 @@ fn update_authority_rotation_transfers_admin_privilege() {
         .ctx
         .tx(&[&alice_admin.signer])
         .build(
-            amm::SetLockedBundle { authority: alice_admin.pubkey(), config: pool.config },
+            amm::SetLockedBundle {
+                authority: alice_admin.pubkey(),
+                config: pool.config,
+            },
             amm::instruction::SetLocked { locked: false },
         )
         .send_err_named("Unauthorized");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 }
 
@@ -366,13 +423,21 @@ fn update_fee_rejects_invalid_fee_at_denominator() {
         .ctx
         .tx(&[&admin.signer])
         .build(
-            amm::UpdateFeeBundle { authority: admin.pubkey(), config: pool.config },
-            amm::instruction::UpdateFee { new_fee_bps: 10_000 },
+            amm::UpdateFeeBundle {
+                authority: admin.pubkey(),
+                config: pool.config,
+            },
+            amm::instruction::UpdateFee {
+                new_fee_bps: 10_000,
+            },
         )
         .send_err_named("InvalidFee");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: fee unchanged");

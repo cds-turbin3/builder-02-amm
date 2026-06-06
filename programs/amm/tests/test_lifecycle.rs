@@ -33,7 +33,10 @@ fn swap_a_to_b(world: &mut Scenario, pool: &Pool, user: &UserAccounts, amount_in
     world.swap(
         user,
         pool,
-        SwapKind::ExactInput { amount_in, min_amount_out: 1 },
+        SwapKind::ExactInput {
+            amount_in,
+            min_amount_out: 1,
+        },
         SwapDir::AtoB,
     );
 }
@@ -42,7 +45,10 @@ fn swap_b_to_a(world: &mut Scenario, pool: &Pool, user: &UserAccounts, amount_in
     world.swap(
         user,
         pool,
-        SwapKind::ExactInput { amount_in, min_amount_out: 1 },
+        SwapKind::ExactInput {
+            amount_in,
+            min_amount_out: 1,
+        },
         SwapDir::BtoA,
     );
 }
@@ -80,8 +86,16 @@ fn record_conservation(
     }
     let vault_x = world.ctx.svm.token_balance(&pool.vault_x).unwrap_or(0);
     let vault_y = world.ctx.svm.token_balance(&pool.vault_y).unwrap_or(0);
-    md.check("X conserved (users + vault == minted)", totals.0, users_x + vault_x);
-    md.check("Y conserved (users + vault == minted)", totals.1, users_y + vault_y);
+    md.check(
+        "X conserved (users + vault == minted)",
+        totals.0,
+        users_x + vault_x,
+    );
+    md.check(
+        "Y conserved (users + vault == minted)",
+        totals.1,
+        users_y + vault_y,
+    );
 }
 
 /// Full lifecycle: two LPs deposit, two traders swap in both directions,
@@ -111,28 +125,84 @@ fn lifecycle_conserves_tokens_across_users_and_vaults() {
     let actors = [&alice, &bob_lp, &carol, &dan];
     let totals = (18_000u64, 63_000u64);
 
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "Before any instruction");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "Before any instruction",
+    );
 
     world.deposit(&alice, &pool, 1_000, 4_000, 1);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After Alice's deposit");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After Alice's deposit",
+    );
 
     swap_a_to_b(&mut world, &pool, &carol, 100);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After Carol swaps X→Y");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After Carol swaps X→Y",
+    );
 
     world.deposit(&bob_lp, &pool, 500, 2_000, 1);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After BobLP's deposit");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After BobLP's deposit",
+    );
 
     swap_b_to_a(&mut world, &pool, &dan, 200);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After Dan swaps Y→X");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After Dan swaps Y→X",
+    );
 
     swap_a_to_b(&mut world, &pool, &carol, 50);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After Carol's second swap");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After Carol's second swap",
+    );
 
     withdraw_all(&mut world, &pool, &alice);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After Alice withdraws");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After Alice withdraws",
+    );
 
     withdraw_all(&mut world, &pool, &bob_lp);
-    record_conservation(&mut md, &mut world, &pool, &actors, totals, "After BobLP withdraws");
+    record_conservation(
+        &mut md,
+        &mut world,
+        &pool,
+        &actors,
+        totals,
+        "After BobLP withdraws",
+    );
 
     md.snapshot("final pool", &world.observe_pool(&pool));
 }
@@ -197,5 +267,9 @@ fn fees_accrue_to_lp_via_k_growth() {
         "withdrawn (X, Y) = ({alice_x_gained}, {alice_y_gained}); geometric \
          claim = {geometric_claim}, vs {geometric_at_deposit} at deposit."
     ));
-    md.check("LP's geometric claim grew with fees", true, geometric_claim > geometric_at_deposit);
+    md.check(
+        "LP's geometric claim grew with fees",
+        true,
+        geometric_claim > geometric_at_deposit,
+    );
 }

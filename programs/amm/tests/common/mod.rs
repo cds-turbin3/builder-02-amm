@@ -119,11 +119,17 @@ pub fn setup() -> Scenario {
     // uniqueness), so derive them directly from the registry's domain. Seeding
     // the mints is what makes the pool PDAs (config, vaults, LP mint) stable.
     let mint_authority = actors.keypair("authority");
-    ctx.svm.airdrop(&mint_authority.pubkey(), DEFAULT_SOL).unwrap();
+    ctx.svm
+        .airdrop(&mint_authority.pubkey(), DEFAULT_SOL)
+        .unwrap();
     let mint_x_kp = actors.keypair("mint:x");
     let mint_y_kp = actors.keypair("mint:y");
-    ctx.svm.create_token_mint_at(&mint_authority, &mint_x_kp, 6).unwrap();
-    ctx.svm.create_token_mint_at(&mint_authority, &mint_y_kp, 6).unwrap();
+    ctx.svm
+        .create_token_mint_at(&mint_authority, &mint_x_kp, 6)
+        .unwrap();
+    ctx.svm
+        .create_token_mint_at(&mint_authority, &mint_y_kp, 6)
+        .unwrap();
     let (mint_x, mint_y) = (mint_x_kp.pubkey(), mint_y_kp.pubkey());
     ctx.alias(mint_x, "MintX").alias(mint_y, "MintY");
     Scenario {
@@ -473,9 +479,18 @@ impl Scenario {
     /// `—`, distinct from a present-but-empty `Some(0)`.
     pub fn observe_user(&mut self, who: &UserAccounts, pool: &Pool) -> Balances {
         Balances::new()
-            .row(format!("{} X", who.label), self.ctx.svm.token_balance(&who.ata_x))
-            .row(format!("{} Y", who.label), self.ctx.svm.token_balance(&who.ata_y))
-            .row(format!("{} LP", who.label), self.ctx.svm.token_balance(&who.ata_lp(&pool.mint_lp)))
+            .row(
+                format!("{} X", who.label),
+                self.ctx.svm.token_balance(&who.ata_x),
+            )
+            .row(
+                format!("{} Y", who.label),
+                self.ctx.svm.token_balance(&who.ata_y),
+            )
+            .row(
+                format!("{} LP", who.label),
+                self.ctx.svm.token_balance(&who.ata_lp(&pool.mint_lp)),
+            )
     }
 
     /// A frozen view of the pool's `Config` account as a field/value table.
@@ -495,7 +510,12 @@ impl Scenario {
                 ("locked".to_string(), config.locked.to_string()),
                 (
                     "authority".to_string(),
-                    if config.authority.is_some() { "set" } else { "renounced" }.to_string(),
+                    if config.authority.is_some() {
+                        "set"
+                    } else {
+                        "renounced"
+                    }
+                    .to_string(),
                 ),
             ],
         )

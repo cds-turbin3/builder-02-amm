@@ -51,9 +51,21 @@ fn initialize_creates_config_lp_mint_and_vaults() {
 
     md.step("After: LP mint, both reserve vaults, and the lock vault exist at zero");
     md.snapshot("pool", &world.observe_pool(&pool));
-    md.check("vault_x exists, empty", Some(0), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y exists, empty", Some(0), world.ctx.svm.token_balance(&pool.vault_y));
-    md.check("lp_vault exists, empty", Some(0), world.ctx.svm.token_balance(&pool.lp_vault));
+    md.check(
+        "vault_x exists, empty",
+        Some(0),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y exists, empty",
+        Some(0),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
+    md.check(
+        "lp_vault exists, empty",
+        Some(0),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
 }
 
 /// `fee_bps >= FEE_DENOMINATOR (10_000)` is rejected at init. The handler's
@@ -97,9 +109,16 @@ fn initialize_rejects_invalid_fee_at_denominator() {
         .send_err_named("InvalidFee");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: rejection.logs_structured_string(),
+        },
     );
 
     md.step("After: Config was never created");
-    md.check("config account absent", false, world.ctx.account_exists(&pool.config));
+    md.check(
+        "config account absent",
+        false,
+        world.ctx.account_exists(&pool.config),
+    );
 }

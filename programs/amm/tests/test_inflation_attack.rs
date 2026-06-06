@@ -52,20 +52,43 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
             .tx(&[&alice.signer])
             .build(
                 amm::AddLiquidityBundle::from((&pool, &alice)),
-                amm::instruction::AddLiquidity { amount_a: 1, amount_b: 1, min_lp_tokens: 0 },
+                amm::instruction::AddLiquidity {
+                    amount_a: 1,
+                    amount_b: 1,
+                    min_lp_tokens: 0,
+                },
             )
             .send_err_named("InsufficientLiquidity");
         md.block(
             "case 1 rejection logs",
-            MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+            MarkdownBlock::Fenced {
+                lang: "console".into(),
+                body: rejection.logs_structured_string(),
+            },
         );
 
         md.snapshot("case 1 alice", &world.observe_user(&alice, &pool));
         md.snapshot("case 1 pool", &world.observe_pool(&pool));
-        md.check("case 1 alice X unmoved", Some(1_000_000), world.ctx.svm.token_balance(&alice.ata_x));
-        md.check("case 1 alice Y unmoved", Some(1_000_000), world.ctx.svm.token_balance(&alice.ata_y));
-        md.check("case 1 vault_x empty", Some(0), world.ctx.svm.token_balance(&pool.vault_x));
-        md.check("case 1 vault_y empty", Some(0), world.ctx.svm.token_balance(&pool.vault_y));
+        md.check(
+            "case 1 alice X unmoved",
+            Some(1_000_000),
+            world.ctx.svm.token_balance(&alice.ata_x),
+        );
+        md.check(
+            "case 1 alice Y unmoved",
+            Some(1_000_000),
+            world.ctx.svm.token_balance(&alice.ata_y),
+        );
+        md.check(
+            "case 1 vault_x empty",
+            Some(0),
+            world.ctx.svm.token_balance(&pool.vault_x),
+        );
+        md.check(
+            "case 1 vault_y empty",
+            Some(0),
+            world.ctx.svm.token_balance(&pool.vault_y),
+        );
     }
 
     // Case 2: (1_000, 1_000). On the boundary: sqrt(1_000_000) == 1_000 == MIN.
@@ -80,16 +103,31 @@ fn first_deposit_at_or_below_minimum_liquidity_rejects() {
             .tx(&[&alice.signer])
             .build(
                 amm::AddLiquidityBundle::from((&pool, &alice)),
-                amm::instruction::AddLiquidity { amount_a: 1_000, amount_b: 1_000, min_lp_tokens: 0 },
+                amm::instruction::AddLiquidity {
+                    amount_a: 1_000,
+                    amount_b: 1_000,
+                    min_lp_tokens: 0,
+                },
             )
             .send_err_named("InsufficientLiquidity");
         md.block(
             "case 2 rejection logs",
-            MarkdownBlock::Fenced { lang: "console".into(), body: rejection.logs_structured_string() },
+            MarkdownBlock::Fenced {
+                lang: "console".into(),
+                body: rejection.logs_structured_string(),
+            },
         );
 
-        md.check("case 2 alice X unmoved", Some(1_000_000), world.ctx.svm.token_balance(&alice.ata_x));
-        md.check("case 2 alice Y unmoved", Some(1_000_000), world.ctx.svm.token_balance(&alice.ata_y));
+        md.check(
+            "case 2 alice X unmoved",
+            Some(1_000_000),
+            world.ctx.svm.token_balance(&alice.ata_x),
+        );
+        md.check(
+            "case 2 alice Y unmoved",
+            Some(1_000_000),
+            world.ctx.svm.token_balance(&alice.ata_y),
+        );
     }
 }
 
@@ -115,8 +153,16 @@ fn minimal_viable_first_deposit_succeeds_just_above_threshold() {
     md.step("After: Alice holds 1 LP, lock vault holds MINIMUM_LIQUIDITY");
     md.snapshot("pool", &world.observe_pool(&pool));
     md.snapshot("alice", &world.observe_user(&alice, &pool));
-    md.check("alice receives 1 LP (1001 − 1000)", Some(1), world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)));
-    md.check("lock vault holds MINIMUM_LIQUIDITY", Some(1_000), world.ctx.svm.token_balance(&pool.lp_vault));
+    md.check(
+        "alice receives 1 LP (1001 − 1000)",
+        Some(1),
+        world.ctx.svm.token_balance(&alice.ata_lp(&pool.mint_lp)),
+    );
+    md.check(
+        "lock vault holds MINIMUM_LIQUIDITY",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
 }
 
 /// End-to-end demonstration of the attack and its mitigation.
@@ -145,8 +191,16 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
     );
     world.mint_to_vault_x(&pool, 1_000_000);
     md.snapshot("pool after donation", &world.observe_pool(&pool));
-    md.check("vault_x inflated", Some(1_001_001), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y unchanged", Some(1_001), world.ctx.svm.token_balance(&pool.vault_y));
+    md.check(
+        "vault_x inflated",
+        Some(1_001_001),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y unchanged",
+        Some(1_001),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
 
     md.step("Step 3: honest Henry attempts a normal (1000, 1000) deposit");
     md.note(
@@ -165,18 +219,33 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
         .tx(&[&henry.signer])
         .build(
             amm::AddLiquidityBundle::from((&pool, &henry)),
-            amm::instruction::AddLiquidity { amount_a: 1_000, amount_b: 1_000, min_lp_tokens: 0 },
+            amm::instruction::AddLiquidity {
+                amount_a: 1_000,
+                amount_b: 1_000,
+                min_lp_tokens: 0,
+            },
         )
         .send_err_named("InsufficientLiquidity");
     md.block(
         "rejection logs",
-        MarkdownBlock::Fenced { lang: "console".into(), body: r.logs_structured_string() },
+        MarkdownBlock::Fenced {
+            lang: "console".into(),
+            body: r.logs_structured_string(),
+        },
     );
 
     md.step("After: Henry's token state rolled back");
     md.snapshot("henry", &world.observe_user(&henry, &pool));
-    md.check("henry X rolled back", henry_x_before, world.ctx.svm.token_balance(&henry.ata_x));
-    md.check("henry Y rolled back", henry_y_before, world.ctx.svm.token_balance(&henry.ata_y));
+    md.check(
+        "henry X rolled back",
+        henry_x_before,
+        world.ctx.svm.token_balance(&henry.ata_x),
+    );
+    md.check(
+        "henry Y rolled back",
+        henry_y_before,
+        world.ctx.svm.token_balance(&henry.ata_y),
+    );
 
     // Fees do NOT roll back. Henry is the fee payer; the lamport delta must
     // equal the tx fee exactly, with no other on-chain effect on his SOL.
@@ -192,7 +261,19 @@ fn inflation_attack_via_donation_leaves_honest_depositor_unharmed() {
 
     md.step("After: vaults and lock vault unchanged from the post-donation state");
     md.snapshot("pool", &world.observe_pool(&pool));
-    md.check("vault_x unchanged", Some(1_001_001), world.ctx.svm.token_balance(&pool.vault_x));
-    md.check("vault_y unchanged", Some(1_001), world.ctx.svm.token_balance(&pool.vault_y));
-    md.check("lock vault still holds 1000 LP", Some(1_000), world.ctx.svm.token_balance(&pool.lp_vault));
+    md.check(
+        "vault_x unchanged",
+        Some(1_001_001),
+        world.ctx.svm.token_balance(&pool.vault_x),
+    );
+    md.check(
+        "vault_y unchanged",
+        Some(1_001),
+        world.ctx.svm.token_balance(&pool.vault_y),
+    );
+    md.check(
+        "lock vault still holds 1000 LP",
+        Some(1_000),
+        world.ctx.svm.token_balance(&pool.lp_vault),
+    );
 }
