@@ -30,10 +30,9 @@ test-helpers = ["dep:anchor-litesvm"]
 anchor-lang = { version = "1.0.2", features = ["init-if-needed"] }
 anchor-spl = "1.0.0"
 amm-math = { path = "../../crates/amm-math" }
-# Optional: pulled in only by the `test-helpers` feature so the BPF binary
-# stays clean. anchor_litesvm re-exports the `Bundle` and `BundledPubkeys`
-# derives, so this single dep is enough.
-anchor-litesvm = { path = "../../../../oss/upstream/anchor-litesvm/crates/anchor-litesvm", optional = true }
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+anchor-litesvm = { git = "https://github.com/cds-rs/anchor-litesvm", branch = "turbin3", optional = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
