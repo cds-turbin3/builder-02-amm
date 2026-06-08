@@ -225,7 +225,7 @@ fee_amount = amount_in - amount_in_after_fee
 | Reserve Identity (In) | `new_reserve_in == reserve_in + amount_in` | Full input enters the pool; fee tokens remain. Critical: using `amount_in_after_fee` silently leaks value. |
 | Reserve Identity (Out) | `new_reserve_out == reserve_out - amount_out` | Exact output removed. |
 | Constant-Product | `new_k >= old_k` (where `k = reserve_in * reserve_out`) | Invariant holds; fees inflate `k` further. Compute with u128. |
-| Pre-Fee Invariant | `(reserve_in + amount_in_after_fee) * new_reserve_out >= reserve_in * old_reserve_out` | Strictly stronger: fee is pure yield, not load-bearing. Protects against bugs that leak value to traders. |
+| Pre-Fee Invariant | `(reserve_in + amount_in_after_fee) * new_reserve_out >= reserve_in * old_reserve_out` | Strictly stronger: the fee is pure yield, not part of the invariant. Protects against bugs that leak value to traders. |
 
 ### Liquidity Add Invariants
 

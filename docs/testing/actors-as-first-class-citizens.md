@@ -147,129 +147,113 @@ front. The savings are negative.
 
 **2. The admin-as-trader case is the loudest signal.** In
 `test_lock_unlock_attack.rs`, the admin is both the authority (flips
-locked) *and* a trader (swaps). Under the original design, the admin
-came back from `fresh_pool` as a raw `Keypair`, with no ATAs. The test
-paid for the promotion to trader with ~10 lines of inline
-`create_associated_token_account` + `mint_to`. After the migration,
-`fresh_pool` returns the admin as a `UserAccounts` with ATAs already in
-place; the promotion is one call:
+`locked`) *and* a trader (swaps). Because `fresh_pool` returns the admin as a
+`UserAccounts` with ATAs already in place, the promotion to trader is one call:
 
 ```rust
 world.mint_to_x(&admin, 200_000);
 ```
 
-One scenario carries the cost-of-not-unifying for the whole suite. The
-unification pays it back.
+Were the admin a bare `Keypair` instead, that one scenario would pay for the
+promotion with ~10 lines of inline `create_associated_token_account` + `mint_to`.
+One shared actor type spares every test that cost.
 
-**3. Instructions were hand-built more often than verbed.** Pre-migration
-the suite had verbs for `set_locked`, `deposit`, and `fresh_pool`. Every
-other instruction (`swap`, `remove_liquidity`, `update_fee`,
-`update_authority`, `initialize`) was constructed inline as
-`world.ctx.program().build_ix(SomeBundle { ... }, instruction::Foo { ... })`.
-Across 33 scenarios that's ~80 inline ix-builds, each repeating the
-bundle-account list and the args struct. The file-local helpers
-(`swap_a_to_b`, `swap_b_to_a`, `withdraw_all`) in `test_lifecycle.rs`
-were the signal: someone was already patching the missing verbs
-per-file. Filling out the verb set on `Scenario` collapses the
-duplication.
+**3. Every instruction has a verb.** Were only some verbed (say `set_locked`,
+`deposit`, `fresh_pool`) and the rest built inline as
+`world.ctx.program().build_ix(SomeBundle { ... }, instruction::Foo { ... })`,
+the 33 scenarios would carry ~80 inline ix-builds, each repeating the
+bundle-account list and the args struct, and file-local helpers (`swap_a_to_b`,
+`swap_b_to_a`, `withdraw_all` in `test_lifecycle.rs`) would spring up as per-file
+patches for the gaps. A full verb set on `Scenario` removes the duplication.
 
-**4. The `Attacker` was a four-line incantation, repeated.** Four
-admin-negative scenarios opened with
+**4. The attacker is a one-line `cast`.** `world.cast(label)` gives a funded,
+aliased `UserAccounts` with zero token balance, which matches reality: the
+admin-negative tests reject before any transfer, so the ATAs are irrelevant.
+Without it, the four admin-negative scenarios would each open with the same
+incantation:
 
 ```rust
 let attacker = world.ctx.svm.create_funded_account(10_000_000_000).unwrap();
 world.alias(attacker.pubkey(), "Attacker");
 ```
 
-The `world.cast(label)` verb (lifted from voting) collapses this to one
-line. The attacker is a `UserAccounts` with zero token balance, which
-matches reality: the test rejects before any transfer, so the ATAs are
-irrelevant.
+## The design
 
-## What changed in the design
+The pieces a test composes, in rough order of how much each one buys you.
 
-In rough order of leverage:
+### `Scenario`, bound to `world`
 
-### a. `Bootstrap` renamed to `Scenario`
+A test owns a `Scenario` (`let mut world = setup();`): it holds the SVM context,
+the alias table, and the cast. Every test reads `world.<verb>(...)`, so the type
+name and the variable name agree, and the term matches the voting sibling repo
+and the capstone LOI.
 
-The type was already used as `world` in every test (`let mut world =
-setup();`). The type/variable disagreement was a small papercut every
-time you read a test. The rename aligns the type name with both the
-voting sibling repo and the LOI's terminology.
+### Actors are `UserAccounts`, label included
 
-### b. `UserAccounts` carries `label: String`
+Each actor is a `UserAccounts` that carries its own `label`. Helpers read the
+label off the `&UserAccounts`, and aliases for derived accounts come out as
+`"{actor.label}:<role>"` without the caller re-passing it. A name lives on the
+actor, not only in the alias table.
 
-The label moves from being known only to the alias map (write-once,
-read-never from the test's perspective) onto the actor itself. Helpers
-that need the label can read it from the `&UserAccounts`; aliases for
-derived accounts can be auto-generated as `"{actor.label}:<role>"`
-without re-passing the label.
+### The admin is an actor like any other
 
-### c. Admin returned as `UserAccounts`, not `Keypair`
+`fresh_pool(fee_bps)` returns `(UserAccounts, Pool)`: the pool authority is a
+`UserAccounts` of the same type as every trader, ATAs and all. (Those ATAs cost
+two account creations and go unused in all but `lock_unlock_attack`, where the
+admin also trades.) Admin-flavored and user-flavored tests read identically.
 
-`fresh_pool` now hands back `(UserAccounts, Pool)`. Every admin-flavored
-test has the same type as every user-flavored test. ATAs are created
-for the admin too (cheap, two account creations); they're unused in 10
-of 11 admin scenarios and load-bearing in the one (`lock_unlock_attack`)
-that needs them.
+### The verb set
 
-### d. The verb set on `Scenario`
+The verbs take typed actors and register derived state in the alias table:
 
-The full set, taking typed actors and registering derived state in the
-alias table:
-
-| Verb | Replaces |
+| Verb | What it does |
 | --- | --- |
-| `cast(label) -> UserAccounts` | `create_funded_account` + `alias` |
-| `user(label, x, y) -> UserAccounts` | the old `make_user` with explicit SOL |
-| `fresh_pool(fee_bps) -> (UserAccounts, Pool)` | unchanged at the call site; admin's type changed |
-| `initialize(initializer, pool, fee_bps, authority)` | inline `InitializeBundle` builds in `test_initialize.rs` |
-| `deposit(user, pool, a, b, min_lp)` | unchanged at the call site; arg order is user-first now |
-| `remove_liquidity(user, pool, lp_burn, min_a, min_b)` | inline `RemoveLiquidityBundle` builds |
-| `swap(user, pool, kind, dir: SwapDir)` | inline `SwapBundle` builds (~15 callsites) |
-| `set_locked(admin, pool, locked)` | unchanged at the call site; admin's type changed |
-| `update_fee(admin, pool, new_fee_bps)` | inline `UpdateFeeBundle` builds |
-| `update_authority(admin, pool, new_authority: Option<&UserAccounts>)` | inline `UpdateAuthorityBundle` builds |
-| `mint_to_x` / `mint_to_y(user, amount)` | inline `mint_to` for the admin-as-trader promotion |
-| `mint_to_vault_x` / `mint_to_vault_y(pool, amount)` | inline `mint_to` for the inflation-attack donation |
+| `cast(label) -> UserAccounts` | a funded, aliased signer with no token accounts |
+| `user(label, x, y) -> UserAccounts` | a funded actor with X and Y balances |
+| `fresh_pool(fee_bps) -> (UserAccounts, Pool)` | the admin and an initialized pool |
+| `initialize(initializer, pool, fee_bps, authority)` | initialize a pool |
+| `deposit(user, pool, a, b, min_lp)` | add liquidity (user-first arg order) |
+| `remove_liquidity(user, pool, lp_burn, min_a, min_b)` | withdraw liquidity |
+| `swap(user, pool, kind, dir: SwapDir)` | swap in a typed direction |
+| `set_locked(admin, pool, locked)` | pause or unpause trading |
+| `update_fee(admin, pool, new_fee_bps)` | rotate the fee |
+| `update_authority(admin, pool, new_authority: Option<&UserAccounts>)` | rotate or renounce authority |
+| `mint_to_x` / `mint_to_y(user, amount)` | fund an actor's token balance |
+| `mint_to_vault_x` / `mint_to_vault_y(pool, amount)` | donate directly to a vault (the inflation-attack setup) |
 
-### e. Typed `SwapDir` instead of `bool`
+### Swap direction is a typed `SwapDir`
 
-The on-chain `Swap` instruction takes `a_to_b: bool`. At the test-API
-layer, that boolean is a mystery value at the call site:
-`world.swap(&bob, &pool, kind, true)` doesn't tell a reader which mint
-goes in and which comes out. The test layer lifts it to an enum:
+The on-chain `Swap` takes `a_to_b: bool`, a mystery value at a call site:
+`world.swap(&bob, &pool, kind, true)` doesn't say which mint goes in and which
+comes out. The test API lifts it to an enum:
 
 ```rust
 pub enum SwapDir { AtoB, BtoA }
 ```
 
-`SwapDir::AtoB` is "spend X, receive Y"; `SwapDir::BtoA` is the
-reverse. The verb converts to the bool at the boundary when building
-the ix; the program API stays as-is. Call sites read:
+`SwapDir::AtoB` is "spend X, receive Y"; `SwapDir::BtoA` is the reverse. The verb
+converts to the bool at the boundary; the program API is untouched. Call sites
+read in the domain:
 
 ```rust
 world.swap_expecting(&bob, &pool, kind, SwapDir::AtoB, "PoolLocked");
 ```
 
-This is a small typed-wrapping move and the same pattern would apply to
-any other boolean-flagged instruction that ever shows up. The principle:
-bools at the API surface are a smell when they encode a *direction* or
-a *mode*; lift them to enums the moment two callsites exist.
+A bool at the API surface that encodes a *direction* or a *mode* is a smell; an
+enum earns its keep the moment two call sites exist.
 
-### f. Negative-path verbs
+### Negative-path verbs
 
-Each happy-path verb has an `_expecting(..., error)` companion. The
-error string is matched as a substring against both the transaction
-logs and the error field (same matcher `anchor_litesvm`'s
-`send_err_named` uses), so one signature accepts Anchor names like
-`"PoolLocked"` and System messages like `"already in use"`.
+Each happy-path verb has an `_expecting(..., error)` companion. The error string
+matches as a substring against both the transaction logs and the error field
+(the same matcher `anchor_litesvm`'s `send_err_named` uses), so one signature
+accepts Anchor names like `"PoolLocked"` and System messages like
+`"already in use"`.
 
-The `_expecting` verbs return `TransactionResult` (rather than unit) so
-tests that want to inspect fees, logs, or compute units can do so. The
-inflation-attack test relies on this: it asserts that Henry's lamport
-delta equals the tx fee exactly (no other on-chain effect should have
-charged his lamports), which requires reading `r.inner().fee`.
+The `_expecting` verbs return `TransactionResult` so a test can inspect fees,
+logs, or compute units. The inflation-attack test relies on this, asserting that
+Henry's lamport delta equals the tx fee exactly (nothing else charged his
+lamports):
 
 ```rust
 let r = world.deposit_expecting(&henry, &pool, 1_000, 1_000, 0, "InsufficientLiquidity");
@@ -277,97 +261,50 @@ let fee = r.inner().fee;
 assert_eq!(henry_lamports_before - henry_lamports_after, fee, ...);
 ```
 
-Tests that don't need the result can ignore it.
+Tests that don't need the result ignore it.
 
-### g. The escape hatch: `s.alias` and `s.ctx`
+### The escape hatch: `s.alias` and `s.ctx`
 
-Two negative tests exercise failures that are *by construction* off the
-verb's natural derivation path:
+Two negative tests exercise failures that are *by construction* off the verbs'
+natural derivation path:
 
-- The voting program's cross-wired-PDA test (sibling repo).
-- The AMM's `lock_unlock_attack` test, which packs three instructions
-  (unlock + swap + relock) into one atomic transaction. The verbs on
-  `Scenario` send one instruction per tx; the attack depends on
-  atomicity, so the test drops to
+- the voting program's cross-wired-PDA test (sibling repo);
+- the AMM's `lock_unlock_attack`, which packs unlock + swap + relock into one
+  atomic transaction. The verbs send one instruction per tx; the attack depends
+  on atomicity, so the test drops to
   `world.ctx.svm.send_instructions(&[unlock_ix, admin_swap_ix, relock_ix], ...)`
-  with the three ix's built directly.
+  with the three instructions built directly.
 
-`s.alias(pubkey, label)` is exposed publicly precisely so these tests
-can keep their off-pattern accounts named in the structured log
-output. The escape hatch is the right pattern for any test whose
-*point* is violating the invariants the verbs encode.
+`s.alias(pubkey, label)` is public precisely so these tests keep their
+off-pattern accounts named in the structured logs. The escape hatch is the right
+shape for any test whose *point* is violating the invariants the verbs encode.
 
 ## Worked example: `admin_atomically_unlocks_swaps_and_relocks_while_users_blocked`
 
-The single scenario where the admin both flips the lock and trades is
-the cleanest before/after, because it's where the admin-as-`UserAccounts`
-change pays off most visibly.
-
-### Before
+The scenario where the admin both flips the lock and trades shows the verbs and
+the one escape hatch in the same test:
 
 ```rust
 fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
     let mut world = setup();
-    let (admin, pool) = world.fresh_pool(30);          // admin: Keypair
-
-    let alice = world.make_user("Alice", 10_000_000_000, 1_000_000, 1_000_000);
-    world.deposit(&pool, &alice, 1_000_000, 1_000_000, 1);
-
-    // Promote admin to trader: ten lines of manual ATA setup.
-    let admin_ata_x = world.ctx.svm
-        .create_associated_token_account(&world.mint_x, &admin).unwrap();
-    let admin_ata_y = world.ctx.svm
-        .create_associated_token_account(&world.mint_y, &admin).unwrap();
-    world.ctx.svm.mint_to(&world.mint_x, &admin_ata_x, &world.mint_authority, 200_000)
-        .unwrap();
-
-    let bob = world.make_user("Bob", 10_000_000_000, 100_000, 0);
-
-    // Step 1: inline ix construction for set_locked
-    let lock_ix = world.ctx.program().build_ix(
-        SetLockedBundle { authority: admin.pubkey(), config: pool.config },
-        amm::instruction::SetLocked { locked: true },
-    );
-    world.ctx.svm.send_ok(lock_ix, &[&admin], &world.aliases)
-        .print_logs_structured(&world.aliases);
-
-    // Step 2: inline ix construction for bob's blocked swap
-    let bob_swap = world.ctx.program().build_ix(
-        pool.swap_bundle(&bob),
-        amm::instruction::Swap { /* ... */ },
-    );
-    world.ctx.svm.send_err(bob_swap, &[&bob.signer], &world.aliases)
-        .print_logs_structured(&world.aliases);
-
-    // ... and so on
-}
-```
-
-### After
-
-```rust
-fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
-    let mut world = setup();
-    let (admin, pool) = world.fresh_pool(30);          // admin: UserAccounts
+    let (admin, pool) = world.fresh_pool(30);
 
     let alice = world.user("Alice", 1_000_000, 1_000_000);
     world.deposit(&alice, &pool, 1_000_000, 1_000_000, 1);
 
-    // Promote admin to trader: one line. ATAs were created by fresh_pool.
+    // Promote the admin to trader: one line. ATAs came from fresh_pool.
     world.mint_to_x(&admin, 200_000);
 
     let bob = world.user("Bob", 100_000, 0);
 
-    // Step 1: verb
+    // Happy-path and negative-path verbs.
     world.set_locked(&admin, &pool, true);
-
-    // Step 2: negative-path verb with named error
     world.swap_expecting(&bob, &pool,
         SwapKind::ExactInput { amount_in: 10_000, min_amount_out: 1 },
         SwapDir::AtoB, "PoolLocked");
 
-    // Step 3: drop to lower-level send_instructions for the atomic-bundle attack
-    // (only this part stays inline; the rest of the test is verbs)
+    // The escape hatch: the attack needs all three instructions in one atomic
+    // tx, so it drops below the verbs to send_instructions, the ix's built directly.
     let unlock_ix = world.ctx.program().build_ix(/* ... */);
     let admin_swap_ix = world.ctx.program().build_ix(/* ... */);
     let relock_ix = world.ctx.program().build_ix(/* ... */);
@@ -377,127 +314,43 @@ fn admin_atomically_unlocks_swaps_and_relocks_while_users_blocked() {
         .print_logs_structured(&world.aliases)
         .assert_success();
 
-    // ... bob still can't swap (verb again)
+    // Bob is still blocked on the far side of the window.
     world.swap_expecting(&bob, &pool,
         SwapKind::ExactInput { amount_in: 5_000, min_amount_out: 1 },
         SwapDir::AtoB, "PoolLocked");
 }
 ```
 
-The test is shorter, the noise-to-signal ratio is better, and the only
-inline construction left is the part that *intrinsically* needs the
-lower-level API (the atomic three-instruction bundle). Every other beat
-is a single-verb scenario sentence: `world.set_locked(...)`,
-`world.swap_expecting(...)`, `world.mint_to_x(...)`. The narrative is
+Every beat is a single-verb scenario sentence: `world.set_locked(...)`,
+`world.swap_expecting(...)`, `world.mint_to_x(...)`. The only inline construction
+is the part that *intrinsically* needs the lower-level API: the atomic
+three-instruction bundle, which has to land as one transaction. The narrative is
 the test.
 
-## Size and cognition: did it actually pay off?
+## What a test holds in its head
 
-Worth checking against the diff, not just the worked example. Two
-numbers matter: how much line-count moved around, and how much
-*inline noise* the tests carry (the parts that don't read as the
-domain's verbs).
+The plumbing a test would otherwise repeat (instruction construction, the send
+with its signer slice and aliases, alias registration, the log-print call) lives
+once in `tests/common/mod.rs`, which is the larger half of the suite by line
+count. What remains in a test file reads as *scenario sentences*: one verb per
+beat, actors and pools as named typed values, errors named at the call site.
 
-### Line counts
+So a reader of any one test holds four things:
 
-| File | Before | After | Delta |
-| --- | ---: | ---: | ---: |
-| `test_add_liquidity.rs` | 162 | 118 | -44 |
-| `test_admin.rs` | 403 | 208 | **-195** |
-| `test_edge_cases.rs` | 117 | 100 | -17 |
-| `test_inflation_attack.rs` | 213 | 163 | -50 |
-| `test_initialize.rs` | 101 | 58 | -43 |
-| `test_lifecycle.rs` | 209 | 185 | -24 |
-| `test_lock_unlock_attack.rs` | 208 | 172 | -36 |
-| `test_remove_liquidity.rs` | 118 | 82 | -36 |
-| `test_swap.rs` | 195 | 166 | -29 |
-| **Tests subtotal** | **1726** | **1252** | **-474 (-27%)** |
-| `tests/common/mod.rs` | 297 | 648 | +351 |
-| **Tests + common** | **2023** | **1900** | -123 (-6%) |
+1. the cast (one or two `let alice = world.user(...)` lines);
+2. the pool (one `let (admin, pool) = world.fresh_pool(30)` line);
+3. the beats (one verb per action, in order);
+4. the assertions.
 
-The tests shrank by 474 lines (27%); the shared scaffolding grew by
-351 lines (more than doubled). Net: -123 lines (-6%). Modest as a raw
-LOC delta, but the more interesting number is *which* lines moved.
+and not: the bundle's field layout per instruction, the order of accounts in the
+signer slice, whether the right aliases were registered before the send, whether
+the log-print call was added. The lower-level API surfaces in exactly two places,
+both by design: the `lock_unlock_attack` atomic bundle (which must be one
+transaction) and `test_initialize.rs` (which pins per-field initialization and so
+works below `fresh_pool`'s auto-aliasing).
 
-### Inline-noise markers
-
-Four phrases that mean "this is plumbing, not scenario": the inline
-ix construction (`program().build_ix(...)`), the inline send
-(`send_ok` / `send_err` / `send_err_named` / `send_instructions`), the
-inline alias updates (`world.alias(...)` and `aliases.with(...)` in
-test code), and the inline log-printing (`print_logs_structured(...)`).
-Counted across the 9 test files only (not common):
-
-| Marker | Before | After | Delta |
-| --- | ---: | ---: | ---: |
-| `program().build_ix(...)` | 46 | 4 | -42 |
-| `.send_ok` / `.send_err*` / `.send_instructions` | 44 | 1 | -43 |
-| `world.alias` / `aliases.with` | 8 | 2 | -6 |
-| `.print_logs_structured` | 44 | 1 | -43 |
-
-The remaining inline noise lives in exactly two places:
-
-- The four `build_ix`, the one `send_instructions`, and the one
-  `print_logs_structured` are all in `test_lock_unlock_attack.rs`,
-  building the three-instruction atomic bundle that *intrinsically*
-  requires the lower-level API (the verbs send one ix per tx; the
-  attack depends on atomicity).
-- The two `alias` calls are in `test_initialize.rs`, which exercises
-  the lower-level `initialize` path (without `fresh_pool`'s
-  auto-aliasing) so the test can pin per-field initialization
-  semantics.
-
-Both are exactly the escape-hatch shape the design is meant to
-preserve: tests whose *point* is violating the verbs' assumptions step
-below the verbs deliberately.
-
-### What the lines represent
-
-The 474-line tests shrinkage is not "code golf." It's specifically the
-removal of repeated patterns the reader had to mentally compile every
-time:
-
-- The 42 vanished `build_ix` calls were, on average, ~8 lines each
-  (bundle struct + args struct + closing). That's roughly 330 lines of
-  cargo-cult typing the reader had to verify each time: did `authority`
-  match the right signer? Did `config` match the pool? Did the args
-  pass match the args declared?
-- The 43 vanished `send_ok` / `send_err` calls each chained a signer
-  slice and an aliases reference. A reader who saw `&[&alice.signer]`
-  had to confirm that alice was the same signer as the bundle's
-  `user`, every time.
-- The 43 vanished `print_logs_structured` calls were *line noise*: the
-  test author wanted log output, but the call had to be re-added on
-  every send, and a missed one silently lost diagnostic value.
-
-What's left in the tests is closer to *scenario sentences*: one verb
-per beat, actors and pools as named typed values, errors named at the
-call site. The 351 lines added to `tests/common/mod.rs` are paid
-once and amortized across every scenario; the 474 lines removed from
-test files are paid back every time a reader scans a test for what
-it's *about*.
-
-### Net cognitive cost
-
-The migration shifts complexity from the *use-site* (33 places) to the
-*definition-site* (1 place). Same total complexity in some sense, but
-unevenly distributed: the use-site readings happen ~33× more often
-than the definition-site readings, so the trade is favourable. The
-reader of any one test now has to hold in their head:
-
-1. The cast (one or two `let alice = world.user(...)` lines per test).
-2. The pool (one `let (admin, pool) = world.fresh_pool(30)` line).
-3. The beats (one verb per action, in order).
-4. The assertions (unchanged).
-
-What they no longer have to hold: the bundle's field layout per
-instruction; the order of accounts in the signer slice; whether the
-right aliases were registered before the send; whether the log-print
-call was added or forgotten.
-
-The 6-line `test_admin.rs::update_fee_changes_fee_bps` (down from 22)
-is the upper bound of this kind of test: cast, pool, verb, assert. A
-reader holds it in one glance.
+`test_admin.rs::update_fee_changes_fee_bps` is the floor of the form: cast, pool,
+verb, assert, held in one glance.
 
 ## What's deliberately left out
 
@@ -518,22 +371,18 @@ reader holds it in one glance.
   the struct would couple actor construction to pool construction,
   which is exactly what the current shape is designed to avoid.
 
-## Where this pattern goes next
+## How this pattern scales
 
-The voting-program sibling repo went through the same migration first
-(documented in `voting/docs/testing/actors-as-first-class-citizens.md`).
-The methodology (cast-list table → identify what's already first-class
-→ design what isn't) is the same; the design that fell out differs in
-proportion to the program's complexity:
+The same methodology (cast-list table, identify what's already first-class, design
+what isn't) produces a design sized to the program's complexity:
 
-- Voting has 3 instructions and 12 scenarios; the design is one `Actor`
-  type (signer + label) and a small `Scenario` API.
-- AMM has 8 instructions and 33 scenarios; the design is `UserAccounts`
-  (signer + label + 2 ATAs) and a fuller verb set with `_expecting`
-  variants.
+- Voting (3 instructions, 12 scenarios): one `Actor` type (signer + label) and a
+  small `Scenario` API. See
+  `voting/docs/testing/actors-as-first-class-citizens.md`.
+- AMM (8 instructions, 33 scenarios): `UserAccounts` (signer + label + 2 ATAs) and
+  a fuller verb set with `_expecting` variants.
 
-Both fall out of the same recipe. The next step (capstone-sized) is to
-generalize the testing-side abstractions enough that other Anchor
-programs can adopt the pattern without reinventing the `Scenario` shell
-per repo. That's the user-guide deliverable in Part D of the LOI; this
-doc is one of its three reference patterns.
+The open direction (capstone-sized) is generalizing the testing-side abstractions
+so other Anchor programs adopt the pattern without rebuilding the `Scenario` shell
+per repo: the user-guide deliverable in Part D of the LOI, of which this is one of
+three reference patterns.
